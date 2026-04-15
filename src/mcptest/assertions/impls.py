@@ -507,6 +507,90 @@ class error_handled(_AssertionBase):  # noqa: N801
         )
 
 
+# ---------------------------------------------------------------------------
+# Metric-gated assertions
+# ---------------------------------------------------------------------------
+
+
+@register_assertion
+@dataclass
+class metric_above(_AssertionBase):  # noqa: N801
+    """Pass iff the named metric scores >= threshold.
+
+    Bridges the metrics world into the YAML assertion pipeline.
+    YAML example::
+
+        - metric_above: {metric: tool_efficiency, threshold: 0.8}
+    """
+
+    metric: str
+    threshold: float
+    yaml_key: ClassVar[str] = "metric_above"
+
+    def check(self, trace: Trace) -> AssertionResult:
+        from mcptest.metrics.base import METRICS
+
+        if self.metric not in METRICS:
+            return _result(
+                passed=False,
+                name=self.yaml_key,
+                message=f"unknown metric {self.metric!r}; known: {sorted(METRICS)}",
+                details={"metric": self.metric},
+            )
+        instance = METRICS[self.metric]()
+        result = instance.compute(trace)
+        passed = result.score >= self.threshold
+        return _result(
+            passed=passed,
+            name=self.yaml_key,
+            message=(
+                f"{self.metric} score {result.score:.3f} >= {self.threshold:.3f}"
+                if passed
+                else f"{self.metric} score {result.score:.3f} < threshold {self.threshold:.3f}"
+            ),
+            details={"metric": self.metric, "score": result.score, "threshold": self.threshold},
+        )
+
+
+@register_assertion
+@dataclass
+class metric_below(_AssertionBase):  # noqa: N801
+    """Pass iff the named metric scores <= threshold.
+
+    YAML example::
+
+        - metric_below: {metric: redundancy, threshold: 0.2}
+    """
+
+    metric: str
+    threshold: float
+    yaml_key: ClassVar[str] = "metric_below"
+
+    def check(self, trace: Trace) -> AssertionResult:
+        from mcptest.metrics.base import METRICS
+
+        if self.metric not in METRICS:
+            return _result(
+                passed=False,
+                name=self.yaml_key,
+                message=f"unknown metric {self.metric!r}; known: {sorted(METRICS)}",
+                details={"metric": self.metric},
+            )
+        instance = METRICS[self.metric]()
+        result = instance.compute(trace)
+        passed = result.score <= self.threshold
+        return _result(
+            passed=passed,
+            name=self.yaml_key,
+            message=(
+                f"{self.metric} score {result.score:.3f} <= {self.threshold:.3f}"
+                if passed
+                else f"{self.metric} score {result.score:.3f} > threshold {self.threshold:.3f}"
+            ),
+            details={"metric": self.metric, "score": result.score, "threshold": self.threshold},
+        )
+
+
 # Keep dataclass import happy for py3.10 even if we don't use field() elsewhere.
 _ = field
 _ = Iterable

@@ -1736,3 +1736,103 @@ def watch_command(
         WatchEngine(config).run()
     except KeyboardInterrupt:  # pragma: no cover
         pass
+
+
+# ---------------------------------------------------------------------------
+# scorecard — weighted quality report card with CI exit-code gating
+# ---------------------------------------------------------------------------
+
+
+@click.command(
+    help=(
+        "Render a weighted quality scorecard from a saved trace JSON file.\n\n"
+        "Each registered metric is computed, compared against a per-metric\n"
+        "threshold, and rolled up into a single weighted composite score.\n\n"
+        "Exit code is 1 if the composite score is below the threshold (use\n"
+        "--fail-under to override the threshold at the command line)."
+    )
+)
+@click.argument("trace_json", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help=(
+        "YAML file with thresholds, weights, and composite_threshold.  "
+        "Keys: thresholds (dict), weights (dict), composite_threshold (float), "
+        "default_threshold (float)."
+    ),
+)
+@click.option(
+    "--fail-under",
+    "fail_under",
+    default=None,
+    type=float,
+    help="Exit 1 if composite score is below this value (overrides --config).",
+)
+@click.option(
+    "--fixture",
+    "fixture_paths",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Fixture YAML for schema_compliance and tool_coverage metrics (repeatable).",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Emit machine-readable JSON on stdout instead of a table.",
+)
+def scorecard_command(
+    trace_json: str,
+    config_path: str | None,
+    fail_under: float | None,
+    fixture_paths: tuple[str, ...],
+    json_output: bool,
+) -> None:
+    from mcptest.scorecard import Scorecard, ScorecardConfig, render_scorecard
+
+    console = Console(stderr=json_output)
+
+    try:
+        trace = Trace.load(trace_json)
+    except Exception as exc:
+        console.print(f"[red]error:[/red] could not load trace: {exc}")
+        sys.exit(1)
+
+    # Load optional scorecard config YAML.
+    config: ScorecardConfig | None = None
+    if config_path is not None:
+        try:
+            raw = Path(config_path).read_text(encoding="utf-8")
+            config_data = yaml.safe_load(raw) or {}
+            config = ScorecardConfig.from_dict(config_data)
+        except Exception as exc:
+            console.print(f"[red]error:[/red] could not load scorecard config: {exc}")
+            sys.exit(1)
+
+    if config is None:
+        config = ScorecardConfig()
+
+    # --fail-under overrides the composite_threshold from config.
+    if fail_under is not None:
+        config.composite_threshold = fail_under
+
+    fixtures = []
+    for fp in fixture_paths:
+        try:
+            fixtures.append(load_fixture(fp))
+        except FixtureLoadError as exc:
+            console.print(f"[red]error:[/red] could not load fixture {fp}: {exc}")
+            sys.exit(1)
+
+    scorecard = Scorecard.from_trace(trace, config, fixtures=fixtures or None)
+
+    if json_output:
+        click.echo(scorecard.to_json())
+    else:
+        render_scorecard(console, scorecard)
+
+    if not scorecard.composite_passed:
+        sys.exit(1)

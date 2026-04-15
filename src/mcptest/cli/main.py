@@ -18,6 +18,7 @@ from mcptest.cli.commands import (
     metrics_command,
     record_command,
     run_command,
+    scorecard_command,
     snapshot_command,
     validate_command,
     watch_command,
@@ -54,6 +55,7 @@ main.add_command(cloud_push_command, name="cloud-push")
 main.add_command(generate_command, name="generate")
 main.add_command(coverage_command, name="coverage")
 main.add_command(watch_command, name="watch")
+main.add_command(scorecard_command, name="scorecard")
 
 
 if __name__ == "__main__":  # pragma: no cover

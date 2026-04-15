@@ -2,22 +2,32 @@
 
 Every assertion is a dataclass with a `check(trace) -> AssertionResult` method
 and can be expressed in either Python code or YAML test files. Thirteen core
-assertions ship in this session — see `ASSERTIONS` for the full table.
+assertions ship with the library — see `ASSERTIONS` for the full table.
 
-Python:
+Metric-gated assertions let you use any computed metric as a pass/fail gate:
 
-    from mcptest.assertions import tool_called, max_tool_calls, check_all
+    - metric_above: {metric: tool_efficiency, threshold: 0.8}
+    - metric_below: {metric: redundancy, threshold: 0.2}
 
-    results = check_all([
-        tool_called("create_issue"),
-        max_tool_calls(3),
-    ], trace)
+Combinators express complex boolean logic over other assertions:
 
-YAML (parsed by `parse_assertion`):
+    - all_of:
+        - tool_called: create_issue
+        - max_tool_calls: 5
+    - any_of:
+        - tool_called: create_issue
+        - output_contains: created
+    - none_of:
+        - tool_called: delete_all
 
-    - tool_called: create_issue
-    - max_tool_calls: 3
-    - param_matches: { tool: create_issue, param: title, contains: "500" }
+The `weighted_score` assertion gates on a composite quality score:
+
+    - weighted_score:
+        threshold: 0.75
+        weights:
+          tool_efficiency: 0.3
+          redundancy: 0.2
+          error_recovery_rate: 0.5
 
 Failing a `check` is always represented as `AssertionResult(passed=False)`;
 call `assert_(trace)` on an assertion (or `assert_all(...)` on a list) to
@@ -36,10 +46,18 @@ from mcptest.assertions.base import (
     parse_assertion,
     parse_assertions,
 )
+from mcptest.assertions.combinators import (
+    all_of,
+    any_of,
+    none_of,
+    weighted_score,
+)
 from mcptest.assertions.impls import (
     completes_within_s,
     error_handled,
     max_tool_calls,
+    metric_above,
+    metric_below,
     no_errors,
     output_contains,
     output_matches,
@@ -57,12 +75,17 @@ __all__ = [
     "AssertionResult",
     "McpTestAssertionError",
     "TraceAssertion",
+    "all_of",
+    "any_of",
     "assert_all",
     "check_all",
     "completes_within_s",
     "error_handled",
     "max_tool_calls",
+    "metric_above",
+    "metric_below",
     "no_errors",
+    "none_of",
     "output_contains",
     "output_matches",
     "param_matches",
@@ -74,4 +97,5 @@ __all__ = [
     "tool_not_called",
     "tool_order",
     "trajectory_matches",
+    "weighted_score",
 ]

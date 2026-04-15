@@ -32,6 +32,10 @@ and a regression safety net.
 - **Trajectory assertions** — assert which tools were called, in what order, with what
   parameters, how many times, and how quickly.
 - **Error injection** — trigger named error scenarios to test your agent's recovery paths.
+- **Metric-gated assertions & scorecards** — use any quality metric as a YAML assertion
+  gate (`metric_above`, `metric_below`), compose assertions with boolean combinators
+  (`all_of`, `any_of`, `none_of`, `weighted_score`), and generate a weighted quality
+  report card with `mcptest scorecard` for model comparison and prompt tuning.
 - **Regression diffing** — snapshot an agent's trajectory and detect drift when prompts,
   models, or MCP servers change.
 - **Watch mode** — `mcptest watch` monitors your test files and fixtures, automatically
@@ -109,6 +113,72 @@ cases:
           param: title
           contains: "500"
       - max_tool_calls: 3
+```
+
+## Metric-gated assertions
+
+Use any of the 7 built-in quality metrics directly as YAML assertion gates:
+
+```yaml
+assertions:
+  # Agent must be efficient (≥80% unique tool usage)
+  - metric_above: {metric: tool_efficiency, threshold: 0.8}
+  # Agent must not be repetitive (non-redundancy score ≥0.9)
+  - metric_above: {metric: redundancy, threshold: 0.9}
+  # Gate on a weighted composite quality score
+  - weighted_score:
+      threshold: 0.75
+      weights:
+        tool_efficiency: 0.3
+        redundancy: 0.2
+        error_recovery_rate: 0.5
+```
+
+Boolean combinators for complex logic:
+
+```yaml
+assertions:
+  - all_of:
+      - tool_called: create_issue
+      - max_tool_calls: 5
+  - any_of:
+      - tool_called: create_issue
+      - output_contains: created
+  - none_of:
+      - tool_called: delete_all
+      - output_contains: ERROR
+```
+
+## Agent scorecard
+
+Generate a weighted quality report card from any saved trace:
+
+```bash
+# Render a human-readable table (exit 1 if composite score < 0.75)
+mcptest scorecard trace.json
+
+# Override the threshold
+mcptest scorecard trace.json --fail-under 0.8
+
+# Custom weights from a YAML config
+mcptest scorecard trace.json --config scorecard.yaml
+
+# Machine-readable JSON output (for CI pipelines)
+mcptest scorecard trace.json --json
+```
+
+Example `scorecard.yaml`:
+
+```yaml
+composite_threshold: 0.75
+default_threshold: 0.7
+thresholds:
+  tool_efficiency: 0.8
+  error_recovery_rate: 0.9
+weights:
+  tool_efficiency: 2.0
+  redundancy: 1.0
+  error_recovery_rate: 3.0
 ```
 
 ## Status

@@ -8,12 +8,17 @@ from mcptest.assertions import (
     ASSERTIONS,
     AssertionResult,
     McpTestAssertionError,
+    all_of,
+    any_of,
     assert_all,
     check_all,
     completes_within_s,
     error_handled,
     max_tool_calls,
+    metric_above,
+    metric_below,
     no_errors,
+    none_of,
     output_contains,
     output_matches,
     param_matches,
@@ -25,6 +30,7 @@ from mcptest.assertions import (
     tool_not_called,
     tool_order,
     trajectory_matches,
+    weighted_score,
 )
 from mcptest.mock_server.recorder import RecordedCall
 from mcptest.runner.trace import Trace
@@ -412,6 +418,208 @@ class TestYamlParsing:
         assert a.check(t).passed
 
 
+class TestMetricGatedAssertions:
+    """Tests for metric_above and metric_below."""
+
+    def test_metric_above_passes(self) -> None:
+        # tool_efficiency = unique/total; 3 unique / 3 calls = 1.0
+        t = _trace(calls=[_call("a"), _call("b"), _call("c")])
+        r = metric_above("tool_efficiency", 0.8).check(t)
+        assert r.passed
+        assert "tool_efficiency" in r.message
+        assert r.details["score"] == pytest.approx(1.0)
+
+    def test_metric_above_fails(self) -> None:
+        # tool_efficiency = 1/3 ≈ 0.333 (only one unique tool used 3 times)
+        t = _trace(calls=[_call("a"), _call("a"), _call("a")])
+        r = metric_above("tool_efficiency", 0.8).check(t)
+        assert not r.passed
+        assert "< threshold" in r.message
+
+    def test_metric_above_unknown_metric(self) -> None:
+        t = _trace()
+        r = metric_above("no_such_metric", 0.5).check(t)
+        assert not r.passed
+        assert "unknown metric" in r.message
+
+    def test_metric_below_passes(self) -> None:
+        # redundancy = 1 - (dupes/total); no dupes → 1.0, but threshold 1.0
+        t = _trace(calls=[_call("a"), _call("b")])
+        r = metric_below("tool_efficiency", 1.0).check(t)
+        assert r.passed
+
+    def test_metric_below_fails(self) -> None:
+        # tool_efficiency = 1.0 for unique calls, threshold = 0.5
+        t = _trace(calls=[_call("a"), _call("b")])
+        r = metric_below("tool_efficiency", 0.5).check(t)
+        assert not r.passed
+        assert "> threshold" in r.message
+
+    def test_metric_below_unknown_metric(self) -> None:
+        t = _trace()
+        r = metric_below("no_such_metric", 0.5).check(t)
+        assert not r.passed
+        assert "unknown metric" in r.message
+
+    def test_metric_above_yaml_round_trip(self) -> None:
+        a = parse_assertion({"metric_above": {"metric": "tool_efficiency", "threshold": 0.5}})
+        assert isinstance(a, metric_above)
+        assert a.metric == "tool_efficiency"
+        assert a.threshold == 0.5
+
+    def test_metric_below_yaml_round_trip(self) -> None:
+        a = parse_assertion({"metric_below": {"metric": "redundancy", "threshold": 0.3}})
+        assert isinstance(a, metric_below)
+        assert a.metric == "redundancy"
+        assert a.threshold == 0.3
+
+    def test_metric_above_empty_trace(self) -> None:
+        # Empty trace: tool_efficiency = 0/0, metric returns 1.0 (no calls)
+        t = _trace()
+        r = metric_above("tool_efficiency", 0.5).check(t)
+        # 1.0 >= 0.5, should pass
+        assert r.passed
+
+
+class TestAssertionCombinators:
+    """Tests for all_of, any_of, none_of."""
+
+    def test_all_of_passes_when_all_pass(self) -> None:
+        t = _trace(calls=[_call("a"), _call("b")])
+        a = all_of([{"tool_called": "a"}, {"tool_called": "b"}])
+        r = a.check(t)
+        assert r.passed
+        assert "2" in r.message
+
+    def test_all_of_fails_when_one_fails(self) -> None:
+        t = _trace(calls=[_call("a")])
+        a = all_of([{"tool_called": "a"}, {"tool_called": "missing"}])
+        r = a.check(t)
+        assert not r.passed
+        assert "failed" in r.message
+        assert r.details["failed_count"] == 1
+
+    def test_all_of_fails_when_all_fail(self) -> None:
+        t = _trace(calls=[])
+        a = all_of([{"tool_called": "x"}, {"tool_called": "y"}])
+        r = a.check(t)
+        assert not r.passed
+        assert r.details["failed_count"] == 2
+
+    def test_all_of_empty_list_passes(self) -> None:
+        t = _trace()
+        a = all_of([])
+        assert a.check(t).passed
+
+    def test_any_of_passes_when_one_passes(self) -> None:
+        t = _trace(calls=[_call("b")])
+        a = any_of([{"tool_called": "a"}, {"tool_called": "b"}])
+        r = a.check(t)
+        assert r.passed
+        assert r.details["passed_count"] == 1
+
+    def test_any_of_fails_when_none_pass(self) -> None:
+        t = _trace(calls=[])
+        a = any_of([{"tool_called": "a"}, {"tool_called": "b"}])
+        r = a.check(t)
+        assert not r.passed
+        assert "none of 2" in r.message
+
+    def test_none_of_passes_when_none_pass(self) -> None:
+        t = _trace(calls=[_call("safe")])
+        a = none_of([{"tool_called": "dangerous"}, {"output_contains": "ERROR"}])
+        r = a.check(t)
+        assert r.passed
+        assert "none of 2" in r.message
+
+    def test_none_of_fails_when_one_passes(self) -> None:
+        t = _trace(calls=[_call("dangerous")])
+        a = none_of([{"tool_called": "dangerous"}])
+        r = a.check(t)
+        assert not r.passed
+        assert "unexpectedly passed" in r.message
+
+    def test_combinators_yaml_round_trip(self) -> None:
+        a = parse_assertion({"all_of": [{"tool_called": "x"}, {"max_tool_calls": 5}]})
+        assert isinstance(a, all_of)
+        assert len(a.assertions) == 2
+
+        b = parse_assertion({"any_of": [{"tool_called": "x"}]})
+        assert isinstance(b, any_of)
+
+        c = parse_assertion({"none_of": [{"tool_called": "bad"}]})
+        assert isinstance(c, none_of)
+
+    def test_nested_combinator(self) -> None:
+        # all_of wrapping an any_of
+        t = _trace(calls=[_call("a")])
+        a = all_of([
+            {"tool_called": "a"},
+            {"any_of": [{"tool_called": "a"}, {"tool_called": "z"}]},
+        ])
+        assert a.check(t).passed
+
+
+class TestWeightedScore:
+    """Tests for the weighted_score assertion."""
+
+    def test_passes_when_above_threshold(self) -> None:
+        # All unique calls → tool_efficiency = 1.0; no dupes → redundancy = 1.0
+        t = _trace(calls=[_call("a"), _call("b"), _call("c")])
+        a = weighted_score(threshold=0.5, weights={"tool_efficiency": 1.0, "redundancy": 1.0})
+        r = a.check(t)
+        assert r.passed
+        assert r.details["composite"] >= 0.5
+
+    def test_fails_when_below_threshold(self) -> None:
+        # All same tool → tool_efficiency = 1/3 ≈ 0.333; redundancy = 0 (dupes)
+        t = _trace(calls=[_call("a"), _call("a"), _call("a")])
+        a = weighted_score(threshold=0.9, weights={"tool_efficiency": 1.0, "redundancy": 1.0})
+        r = a.check(t)
+        assert not r.passed
+        assert "< threshold" in r.message
+
+    def test_unknown_metric_fails(self) -> None:
+        t = _trace()
+        a = weighted_score(threshold=0.5, weights={"no_such_metric": 1.0})
+        r = a.check(t)
+        assert not r.passed
+        assert "unknown metric" in r.message
+
+    def test_empty_weights_fails(self) -> None:
+        t = _trace()
+        a = weighted_score(threshold=0.5, weights={})
+        r = a.check(t)
+        assert not r.passed
+        assert "at least one" in r.message
+
+    def test_weighted_score_details(self) -> None:
+        t = _trace(calls=[_call("a"), _call("b")])
+        a = weighted_score(threshold=0.5, weights={"tool_efficiency": 0.7, "redundancy": 0.3})
+        r = a.check(t)
+        assert "scores" in r.details
+        assert "weights" in r.details
+        assert "composite" in r.details
+
+    def test_weighted_score_yaml_round_trip(self) -> None:
+        a = parse_assertion({
+            "weighted_score": {
+                "threshold": 0.75,
+                "weights": {"tool_efficiency": 0.5, "redundancy": 0.5},
+            }
+        })
+        assert isinstance(a, weighted_score)
+        assert a.threshold == 0.75
+        assert a.weights == {"tool_efficiency": 0.5, "redundancy": 0.5}
+
+    def test_zero_weight_fails(self) -> None:
+        t = _trace()
+        a = weighted_score(threshold=0.5, weights={"tool_efficiency": 0.0})
+        r = a.check(t)
+        assert not r.passed
+        assert "total weight is zero" in r.message
+
+
 class TestRegistry:
     def test_all_core_registered(self) -> None:
         expected = {
@@ -428,6 +636,12 @@ class TestRegistry:
             "output_matches",
             "no_errors",
             "error_handled",
+            "metric_above",
+            "metric_below",
+            "all_of",
+            "any_of",
+            "none_of",
+            "weighted_score",
         }
         assert expected.issubset(ASSERTIONS.keys())
 
