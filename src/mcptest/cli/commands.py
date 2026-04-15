@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 import click
 from rich.console import Console
 from rich.table import Table
@@ -1086,3 +1088,111 @@ def cloud_push_command(
 
     if json_output:
         click.echo(json_module.dumps(result, indent=2, default=str))
+
+
+# ---------------------------------------------------------------------------
+# generate — schema-driven test suite generator
+# ---------------------------------------------------------------------------
+
+
+@click.command(help="Generate a test suite YAML from fixture input_schema declarations.")
+@click.argument(
+    "fixture_paths",
+    nargs=-1,
+    type=click.Path(exists=True, resolve_path=True),
+)
+@click.option(
+    "--agent",
+    "agent_cmd",
+    required=True,
+    help="Agent command, e.g. 'python agent.py'.",
+)
+@click.option(
+    "--name",
+    default=None,
+    help="Suite name (default: auto-derived from the first fixture file name).",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    default=None,
+    help="Write output to this YAML file (default: stdout).",
+)
+@click.option(
+    "--categories",
+    default=None,
+    help=(
+        "Comma-separated list of categories to generate: "
+        "happy,match,type_error,missing,edge,error (default: all)."
+    ),
+)
+@click.option(
+    "--timeout",
+    "timeout_s",
+    type=float,
+    default=60.0,
+    show_default=True,
+    help="Agent timeout in seconds.",
+)
+def generate_command(
+    fixture_paths: tuple[str, ...],
+    agent_cmd: str,
+    name: str | None,
+    output_path: str | None,
+    categories: str | None,
+    timeout_s: float,
+) -> None:
+    from mcptest.generate import generate_suite
+
+    console = Console(stderr=True)
+
+    if not fixture_paths:
+        console.print("[red]error:[/red] at least one FIXTURE_PATH is required")
+        sys.exit(1)
+
+    fixtures = []
+    for fp in fixture_paths:
+        try:
+            fixtures.append(load_fixture(fp))
+        except FixtureLoadError as exc:
+            console.print(f"[red]error:[/red] {exc}")
+            sys.exit(1)
+
+    # Derive a suite name from the first fixture file when not supplied.
+    if name is None:
+        stem = Path(fixture_paths[0]).stem
+        name = f"{stem}-generated"
+
+    # Parse categories option.
+    parsed_categories: list[str] | None = None
+    if categories:
+        parsed_categories = [c.strip() for c in categories.split(",") if c.strip()]
+
+    try:
+        suite_dict = generate_suite(
+            fixtures,
+            name=name,
+            agent_cmd=agent_cmd,
+            categories=parsed_categories,
+            timeout_s=timeout_s,
+            fixture_paths=list(fixture_paths),
+        )
+    except ValueError as exc:
+        console.print(f"[red]error:[/red] {exc}")
+        sys.exit(1)
+
+    output_yaml = yaml.dump(suite_dict, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+    if output_path:
+        try:
+            Path(output_path).write_text(output_yaml, encoding="utf-8")
+        except OSError as exc:
+            console.print(f"[red]error:[/red] could not write {output_path}: {exc}")
+            sys.exit(1)
+        console.print(
+            f"[green]✓[/green] wrote [bold]{len(suite_dict['cases'])}[/bold] "
+            f"cases to [bold]{output_path}[/bold]"
+        )
+    else:
+        click.echo(output_yaml, nl=False)

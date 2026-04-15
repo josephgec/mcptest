@@ -10,6 +10,7 @@ from mcptest.cli.commands import (
     compare_command,
     diff_command,
     export_command,
+    generate_command,
     init_command,
     install_pack_command,
     list_packs_command,
@@ -48,6 +49,7 @@ main.add_command(list_packs_command, name="list-packs")
 main.add_command(metrics_command, name="metrics")
 main.add_command(compare_command, name="compare")
 main.add_command(cloud_push_command, name="cloud-push")
+main.add_command(generate_command, name="generate")
 
 
 if __name__ == "__main__":  # pragma: no cover
