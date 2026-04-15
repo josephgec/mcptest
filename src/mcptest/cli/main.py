@@ -6,6 +6,7 @@ import click
 
 from mcptest import __version__
 from mcptest.cli.commands import (
+    capture_command,
     cloud_push_command,
     compare_command,
     conformance_command,
@@ -58,6 +59,7 @@ main.add_command(coverage_command, name="coverage")
 main.add_command(watch_command, name="watch")
 main.add_command(scorecard_command, name="scorecard")
 main.add_command(conformance_command, name="conformance")
+main.add_command(capture_command, name="capture")
 
 
 if __name__ == "__main__":  # pragma: no cover

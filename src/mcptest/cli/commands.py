@@ -1977,3 +1977,129 @@ def conformance_command(
 
     if must_failures or (fail_on_should and should_failures):
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# capture — live server discovery → auto-generated fixtures & tests
+# ---------------------------------------------------------------------------
+
+
+@click.command(
+    help=(
+        "Connect to a live MCP server and auto-generate fixture and test files.\n\n"
+        "SERVER_COMMAND is the shell command to start the server, e.g. "
+        "'python my_server.py'. mcptest will connect, enumerate all tools, "
+        "sample responses with diverse arguments, and write a ready-to-use "
+        "fixture YAML (and optionally a test-spec YAML) to the output directory.\n\n"
+        "Examples:\n\n"
+        "  mcptest capture 'python my_server.py'\n\n"
+        "  mcptest capture 'npx my-mcp-server' --output fixtures/ --generate-tests\n\n"
+        "  mcptest capture 'python server.py' --dry-run  # preview without writing"
+    )
+)
+@click.argument("server_command")
+@click.option(
+    "--output",
+    "-o",
+    "output_dir",
+    default=".",
+    show_default=True,
+    type=click.Path(file_okay=False),
+    help="Directory where generated files are written.",
+)
+@click.option(
+    "--generate-tests",
+    is_flag=True,
+    help="Also generate a test-spec YAML file alongside the fixture.",
+)
+@click.option(
+    "--samples-per-tool",
+    "samples_per_tool",
+    type=int,
+    default=3,
+    show_default=True,
+    help="Number of argument variations to try per tool.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Discover and sample without writing any files.",
+)
+@click.option(
+    "--agent",
+    "agent_cmd",
+    default="python agent.py",
+    show_default=True,
+    help="Agent command embedded in generated test suites.",
+)
+def capture_command(
+    server_command: str,
+    output_dir: str,
+    generate_tests: bool,
+    samples_per_tool: int,
+    dry_run: bool,
+    agent_cmd: str,
+) -> None:
+    import anyio
+
+    from mcptest.capture.runner import capture_server
+
+    console = Console()
+
+    async def _run() -> None:
+        if dry_run:
+            console.print("[bold]Dry run — no files will be written.[/bold]")
+
+        console.print(f"[dim]Connecting to:[/dim] {server_command}")
+
+        try:
+            result = await capture_server(
+                server_command,
+                output_dir=output_dir,
+                generate_tests=generate_tests,
+                samples_per_tool=samples_per_tool,
+                dry_run=dry_run,
+                agent_cmd=agent_cmd,
+            )
+        except Exception as exc:
+            console.print(f"[red]error:[/red] {exc}")
+            sys.exit(1)
+
+        disc = result.discovery
+        console.print(
+            f"[green]✓[/green] Connected to [bold]{disc.server_name}[/bold] "
+            f"v{disc.server_version}"
+        )
+        console.print(
+            f"[green]✓[/green] Discovered [bold]{result.tool_count}[/bold] tool(s)"
+        )
+        console.print(
+            f"[green]✓[/green] Executed [bold]{result.sample_count}[/bold] sample call(s)"
+        )
+
+        if dry_run:
+            console.print("\n[bold]Would generate:[/bold]")
+            console.print(f"  fixture: [bold]{disc.server_name or 'captured'}.yaml[/bold]")
+            if generate_tests:
+                console.print(
+                    f"  tests:   [bold]{disc.server_name or 'captured'}-tests.yaml[/bold]"
+                )
+            return
+
+        if result.fixture_path:
+            console.print(
+                f"[green]✓[/green] Wrote fixture → [bold]{result.fixture_path}[/bold]"
+            )
+        for tp in result.test_paths:
+            console.print(
+                f"[green]✓[/green] Wrote tests   → [bold]{tp}[/bold]"
+            )
+
+        console.print("\n[bold]Next steps:[/bold]")
+        if result.fixture_path:
+            console.print(
+                f"  mcptest run --fixture {result.fixture_path} <your-tests.yaml>"
+            )
+        console.print("  mcptest validate  # check generated files are valid")
+
+    anyio.run(_run)

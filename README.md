@@ -44,7 +44,41 @@ and a regression safety net.
 - **pytest integration** — use YAML files or write Python tests with fixtures.
 - **CI/CD ready** — GitHub Action + PR comment bot for regression gating.
 
-## Quickstart
+## Capture — tests write themselves
+
+The fastest way to get started is `mcptest capture`. Point it at any MCP server
+and it auto-discovers tools, samples responses, and writes both fixture YAML and
+test-spec YAML — no hand-writing required.
+
+```bash
+# 1. Install
+pip install mcptest
+
+# 2. Capture a live server → auto-generate fixture + tests
+mcptest capture "python my_server.py" --output fixtures/ --generate-tests
+
+# Generated files:
+#   fixtures/my-server.yaml   ← fixture with real responses
+#   fixtures/my-server-tests.yaml  ← ready-to-run test suite
+
+# 3. Run the generated tests
+mcptest run fixtures/my-server-tests.yaml
+
+# 4. Watch mode — auto-run on save
+mcptest watch --watch-extra src/
+```
+
+Options:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--output` / `-o` | `.` | Directory where files are written |
+| `--generate-tests` | off | Also write a test-spec YAML |
+| `--samples-per-tool` | `3` | Argument variations tried per tool |
+| `--dry-run` | off | Preview without writing files |
+| `--agent` | `python agent.py` | Agent command embedded in test suites |
+
+## Quickstart (manual)
 
 ```bash
 # 1. Install
