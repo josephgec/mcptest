@@ -22,6 +22,11 @@ class TestRunBase(BaseModel):
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     run_metadata: dict[str, Any] = Field(default_factory=dict)
     metric_scores: dict[str, float] = Field(default_factory=dict)
+    # Run labels
+    git_sha: str | None = None
+    git_ref: str | None = None
+    branch: str | None = None
+    environment: str | None = None
 
     @field_validator("metric_scores", mode="before")
     @classmethod
@@ -43,6 +48,15 @@ class TestRunOut(TestRunBase):
 
     id: int
     created_at: datetime
+    is_baseline: bool = False
+
+    @field_validator("is_baseline", mode="before")
+    @classmethod
+    def _coerce_is_baseline(cls, v: Any) -> bool:
+        """Accept None from ORM rows created before this column existed."""
+        if v is None:
+            return False
+        return v
 
 
 class HealthStatus(BaseModel):
@@ -78,3 +92,45 @@ class CompareRequest(BaseModel):
     base_id: int
     head_id: int
     thresholds: dict[str, float] | None = None
+
+
+class BaselinePromoteOut(BaseModel):
+    """Response body for POST/DELETE /runs/{id}/promote."""
+
+    id: int
+    suite: str | None
+    is_baseline: bool
+    message: str
+
+
+class MetricHistoryPoint(BaseModel):
+    """Single time-series data point for metric history."""
+
+    run_id: int
+    created_at: datetime
+    branch: str | None
+    metric_scores: dict[str, float]
+
+
+class MetricHistoryOut(BaseModel):
+    """Response body for GET /metrics/history."""
+
+    points: list[MetricHistoryPoint]
+    suite: str | None
+    branch: str | None
+    metric: str | None
+
+
+class AutoCompareOut(BaseModel):
+    """Response body for POST /runs/{id}/check — auto-compare against baseline."""
+
+    # Embedded comparison result (None when no baseline)
+    base_id: int | None
+    head_id: int
+    deltas: list[ComparisonDelta]
+    overall_passed: bool
+    regression_count: int
+    # Extra context
+    baseline_id: int | None
+    baseline_branch: str | None
+    status: str  # "pass" | "fail" | "no_baseline"

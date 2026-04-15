@@ -43,3 +43,10 @@ class TestRun(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now, nullable=False
     )
+    # Run labels — context about what produced this run.
+    git_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    git_ref: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    branch: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    environment: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Baseline flag — only one run per suite should be the baseline at a time.
+    is_baseline: Mapped[bool] = mapped_column(Boolean, default=False)

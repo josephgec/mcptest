@@ -6,6 +6,7 @@ import click
 
 from mcptest import __version__
 from mcptest.cli.commands import (
+    cloud_push_command,
     compare_command,
     diff_command,
     init_command,
@@ -44,6 +45,7 @@ main.add_command(install_pack_command, name="install-pack")
 main.add_command(list_packs_command, name="list-packs")
 main.add_command(metrics_command, name="metrics")
 main.add_command(compare_command, name="compare")
+main.add_command(cloud_push_command, name="cloud-push")
 
 
 if __name__ == "__main__":  # pragma: no cover

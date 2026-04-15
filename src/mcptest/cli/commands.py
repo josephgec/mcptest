@@ -784,3 +784,183 @@ def install_pack_command(name: str, path: str, force: bool) -> None:
     )
     for rel in written:
         console.print(f"  [dim]created[/dim] {rel}")
+
+
+@click.command(
+    name="cloud-push",
+    help=(
+        "Push a trace JSON file to the mcptest cloud backend, compute metrics,"
+        " and optionally auto-compare against the baseline."
+    ),
+)
+@click.argument("trace_json", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--url",
+    envvar="MCPTEST_CLOUD_URL",
+    default="http://localhost:8000",
+    show_default=True,
+    help="Base URL of the mcptest cloud backend.",
+)
+@click.option("--suite", default=None, help="Suite name to tag this run.")
+@click.option("--case", default=None, help="Case name to tag this run.")
+@click.option("--branch", default=None, help="Git branch label.")
+@click.option("--git-sha", default=None, help="Git SHA label.")
+@click.option("--git-ref", default=None, help="Git ref label.")
+@click.option("--environment", default=None, help="Deployment environment label.")
+@click.option(
+    "--check",
+    is_flag=True,
+    help="Auto-compare against the baseline after pushing.",
+)
+@click.option(
+    "--promote",
+    is_flag=True,
+    help="Promote this run as the new baseline after pushing.",
+)
+@click.option(
+    "--ci",
+    is_flag=True,
+    help="Exit non-zero if regression detected (requires --check).",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Emit machine-readable JSON on stdout.",
+)
+def cloud_push_command(
+    trace_json: str,
+    url: str,
+    suite: str | None,
+    case: str | None,
+    branch: str | None,
+    git_sha: str | None,
+    git_ref: str | None,
+    environment: str | None,
+    check: bool,
+    promote: bool,
+    ci: bool,
+    json_output: bool,
+) -> None:
+    import urllib.error
+    import urllib.request
+
+    from mcptest.metrics import compute_all
+
+    console = Console(stderr=json_output)
+
+    # Load and validate the trace.
+    try:
+        trace = Trace.load(trace_json)
+    except Exception as exc:
+        console.print(f"[red]error:[/red] could not load trace: {exc}")
+        sys.exit(1)
+
+    # Compute metrics from the trace.
+    metric_results = compute_all(trace)
+    metric_scores = {r.name: r.score for r in metric_results}
+
+    # Build the POST /runs payload.
+    payload: dict[str, Any] = {
+        "trace_id": trace.trace_id,
+        "suite": suite,
+        "case": case,
+        "input": trace.input or "",
+        "output": trace.output or "",
+        "exit_code": trace.exit_code,
+        "duration_s": trace.duration_s,
+        "total_tool_calls": len(trace.tool_calls),
+        "passed": trace.succeeded,
+        "tool_calls": [tc.to_dict() for tc in trace.tool_calls],
+        "run_metadata": {},
+        "metric_scores": metric_scores,
+        "branch": branch,
+        "git_sha": git_sha,
+        "git_ref": git_ref,
+        "environment": environment,
+    }
+
+    # POST /runs
+    try:
+        req = urllib.request.Request(
+            f"{url.rstrip('/')}/runs",
+            data=json_module.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req) as resp:
+            run_data = json_module.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode(errors="replace")
+        console.print(f"[red]error:[/red] POST /runs failed ({exc.code}): {body}")
+        sys.exit(1)
+    except Exception as exc:
+        console.print(f"[red]error:[/red] could not reach cloud backend: {exc}")
+        sys.exit(1)
+
+    run_id: int = run_data["id"]
+    if json_output:
+        result: dict[str, Any] = {"run": run_data}
+    else:
+        console.print(f"[green]✓[/green] pushed run [bold]#{run_id}[/bold] to {url}")
+
+    # Optional: promote as baseline.
+    if promote:
+        try:
+            req = urllib.request.Request(
+                f"{url.rstrip('/')}/runs/{run_id}/promote",
+                data=b"",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req) as resp:
+                promote_data = json_module.loads(resp.read())
+            if json_output:
+                result["promote"] = promote_data
+            else:
+                console.print(f"[green]✓[/green] promoted run #{run_id} as baseline")
+        except Exception as exc:
+            console.print(f"[yellow]warning:[/yellow] could not promote baseline: {exc}")
+
+    # Optional: auto-compare against baseline.
+    if check:
+        try:
+            req = urllib.request.Request(
+                f"{url.rstrip('/')}/runs/{run_id}/check",
+                data=b"",
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req) as resp:
+                check_data = json_module.loads(resp.read())
+        except Exception as exc:
+            console.print(f"[yellow]warning:[/yellow] could not run check: {exc}")
+            check_data = None
+
+        if check_data:
+            if json_output:
+                result["check"] = check_data
+            else:
+                status = check_data.get("status", "unknown")
+                if status == "no_baseline":
+                    console.print("[dim]no baseline found — skipping regression check[/dim]")
+                elif status == "pass":
+                    console.print("[green]✓[/green] no regressions detected")
+                else:
+                    rc = check_data.get("regression_count", 0)
+                    console.print(f"[red]✗[/red] {rc} regression(s) detected")
+                    for d in check_data.get("deltas", []):
+                        if d.get("regressed"):
+                            console.print(
+                                f"  [red]{d['name']}[/red]: "
+                                f"{d['base_score']:.3f} → {d['head_score']:.3f} "
+                                f"(Δ {d['delta']:+.3f})"
+                            )
+
+            if ci and check_data.get("status") == "fail":
+                if json_output:
+                    click.echo(json_module.dumps(result, indent=2, default=str))
+                sys.exit(1)
+
+    if json_output:
+        click.echo(json_module.dumps(result, indent=2, default=str))

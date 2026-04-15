@@ -571,3 +571,269 @@ class TestCompareCommand:
         result = runner.invoke(main, ["compare", str(base), str(head)])
         assert result.exit_code == 0
         assert "IMPROVED" in result.output
+
+
+# ---------------------------------------------------------------------------
+# `mcptest cloud-push`
+# ---------------------------------------------------------------------------
+
+
+def _fake_urlopen_factory(responses: list[dict]):
+    """Return a callable that sequentially yields mock HTTP responses.
+
+    Each entry in *responses* is ``{"status": int, "body": dict}``.
+    Raises ``urllib.error.HTTPError`` for status >= 400.
+    """
+    import io
+    import urllib.error
+
+    call_index = {"n": 0}
+
+    def fake_urlopen(req):
+        idx = call_index["n"]
+        call_index["n"] += 1
+        entry = responses[idx]
+        code = entry["status"]
+        body_bytes = json.dumps(entry["body"]).encode()
+        if code >= 400:
+            raise urllib.error.HTTPError(
+                url=str(req.full_url if hasattr(req, "full_url") else req),
+                code=code,
+                msg="error",
+                hdrs=None,
+                fp=io.BytesIO(body_bytes),
+            )
+
+        class FakeResponse:
+            def read(self):
+                return body_bytes
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                pass
+
+        return FakeResponse()
+
+    return fake_urlopen
+
+
+class TestCloudPushCommand:
+    """Tests for `mcptest cloud-push` — HTTP calls are mocked via monkeypatch."""
+
+    def _trace_file(self, tmp_path: Path, trace_id: str = "push-test") -> Path:
+        return _make_trace_file(tmp_path / f"{trace_id}.json", ["tool_a", "tool_b"], trace_id)
+
+    def test_push_success(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        trace_file = self._trace_file(tmp_path)
+        run_resp = {"id": 1, "trace_id": "push-test", "is_baseline": False}
+        monkeypatch.setattr(
+            "urllib.request.urlopen", _fake_urlopen_factory([{"status": 201, "body": run_resp}])
+        )
+        runner = CliRunner()
+        result = runner.invoke(main, ["cloud-push", str(trace_file)])
+        assert result.exit_code == 0, result.output
+        assert "#1" in result.output
+
+    def test_push_json_output(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        trace_file = self._trace_file(tmp_path)
+        run_resp = {"id": 42, "trace_id": "push-test", "is_baseline": False}
+        monkeypatch.setattr(
+            "urllib.request.urlopen", _fake_urlopen_factory([{"status": 201, "body": run_resp}])
+        )
+        runner = CliRunner()
+        result = runner.invoke(main, ["cloud-push", str(trace_file), "--json"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert "run" in data
+        assert data["run"]["id"] == 42
+
+    def test_push_with_check_pass(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        trace_file = self._trace_file(tmp_path)
+        run_resp = {"id": 1, "trace_id": "push-test", "is_baseline": False}
+        check_resp = {
+            "base_id": None,
+            "head_id": 1,
+            "deltas": [],
+            "overall_passed": True,
+            "regression_count": 0,
+            "baseline_id": None,
+            "baseline_branch": None,
+            "status": "no_baseline",
+        }
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            _fake_urlopen_factory(
+                [{"status": 201, "body": run_resp}, {"status": 200, "body": check_resp}]
+            ),
+        )
+        runner = CliRunner()
+        result = runner.invoke(main, ["cloud-push", str(trace_file), "--check"])
+        assert result.exit_code == 0, result.output
+        assert "no baseline" in result.output.lower()
+
+    def test_push_with_check_fail_ci_exits_nonzero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        trace_file = self._trace_file(tmp_path)
+        run_resp = {"id": 2, "trace_id": "push-test", "is_baseline": False}
+        check_resp = {
+            "base_id": 1,
+            "head_id": 2,
+            "deltas": [
+                {
+                    "name": "tool_efficiency",
+                    "label": "Tool Efficiency",
+                    "base_score": 0.9,
+                    "head_score": 0.5,
+                    "delta": -0.4,
+                    "regressed": True,
+                }
+            ],
+            "overall_passed": False,
+            "regression_count": 1,
+            "baseline_id": 1,
+            "baseline_branch": "main",
+            "status": "fail",
+        }
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            _fake_urlopen_factory(
+                [{"status": 201, "body": run_resp}, {"status": 200, "body": check_resp}]
+            ),
+        )
+        runner = CliRunner()
+        result = runner.invoke(main, ["cloud-push", str(trace_file), "--check", "--ci"])
+        assert result.exit_code == 1
+
+    def test_push_with_check_fail_no_ci_exits_zero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        trace_file = self._trace_file(tmp_path)
+        run_resp = {"id": 2, "trace_id": "push-test2", "is_baseline": False}
+        check_resp = {
+            "base_id": 1,
+            "head_id": 2,
+            "deltas": [],
+            "overall_passed": False,
+            "regression_count": 1,
+            "baseline_id": 1,
+            "baseline_branch": None,
+            "status": "fail",
+        }
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            _fake_urlopen_factory(
+                [{"status": 201, "body": run_resp}, {"status": 200, "body": check_resp}]
+            ),
+        )
+        runner = CliRunner()
+        result = runner.invoke(main, ["cloud-push", str(trace_file), "--check"])
+        assert result.exit_code == 0
+
+    def test_push_with_promote(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        trace_file = self._trace_file(tmp_path)
+        run_resp = {"id": 3, "trace_id": "push-test", "is_baseline": False}
+        promote_resp = {"id": 3, "suite": "smoke", "is_baseline": True, "message": "ok"}
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            _fake_urlopen_factory(
+                [
+                    {"status": 201, "body": run_resp},
+                    {"status": 200, "body": promote_resp},
+                ]
+            ),
+        )
+        runner = CliRunner()
+        result = runner.invoke(main, ["cloud-push", str(trace_file), "--promote"])
+        assert result.exit_code == 0, result.output
+        assert "promoted" in result.output.lower() or "#3" in result.output
+
+    def test_push_server_down_exits_nonzero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import urllib.error
+
+        trace_file = self._trace_file(tmp_path)
+
+        def always_fail(req):
+            raise OSError("connection refused")
+
+        monkeypatch.setattr("urllib.request.urlopen", always_fail)
+        runner = CliRunner()
+        result = runner.invoke(main, ["cloud-push", str(trace_file)])
+        assert result.exit_code == 1
+
+    def test_push_conflict_error_exits_nonzero(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """409 from server (duplicate trace_id) should exit 1."""
+        trace_file = self._trace_file(tmp_path)
+        monkeypatch.setattr(
+            "urllib.request.urlopen",
+            _fake_urlopen_factory([{"status": 409, "body": {"detail": "already exists"}}]),
+        )
+        runner = CliRunner()
+        result = runner.invoke(main, ["cloud-push", str(trace_file)])
+        assert result.exit_code == 1
+
+    def test_push_labels_forwarded(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """--branch, --git-sha, --environment labels flow into the payload."""
+        trace_file = self._trace_file(tmp_path)
+        captured_payloads: list[dict] = []
+
+        import io
+        import urllib.request as _urllib_req
+
+        original_Request = _urllib_req.Request
+
+        def capturing_urlopen(req):
+            import json as _json
+
+            if hasattr(req, "data") and req.data:
+                try:
+                    captured_payloads.append(_json.loads(req.data))
+                except Exception:
+                    pass
+            run_resp = {"id": 10, "trace_id": "push-test", "is_baseline": False}
+
+            class FakeResp:
+                def read(self):
+                    return _json.dumps(run_resp).encode()
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, *a):
+                    pass
+
+            return FakeResp()
+
+        monkeypatch.setattr("urllib.request.urlopen", capturing_urlopen)
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            [
+                "cloud-push",
+                str(trace_file),
+                "--branch",
+                "main",
+                "--git-sha",
+                "abc123",
+                "--environment",
+                "prod",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert len(captured_payloads) == 1
+        payload = captured_payloads[0]
+        assert payload["branch"] == "main"
+        assert payload["git_sha"] == "abc123"
+        assert payload["environment"] == "prod"

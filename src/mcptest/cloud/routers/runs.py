@@ -51,10 +51,19 @@ def list_runs(
     db: Annotated[Session, Depends(get_db)],
     limit: int = Query(50, ge=1, le=500),
     passed: bool | None = Query(None),
+    branch: str | None = Query(None),
+    git_sha: str | None = Query(None),
+    environment: str | None = Query(None),
 ) -> list[TestRun]:
     stmt = select(TestRun).order_by(TestRun.created_at.desc()).limit(limit)
     if passed is not None:
         stmt = stmt.where(TestRun.passed == passed)
+    if branch is not None:
+        stmt = stmt.where(TestRun.branch == branch)
+    if git_sha is not None:
+        stmt = stmt.where(TestRun.git_sha == git_sha)
+    if environment is not None:
+        stmt = stmt.where(TestRun.environment == environment)
     return list(db.scalars(stmt))
 
 

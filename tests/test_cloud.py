@@ -418,3 +418,94 @@ class TestCreateApp:
         app = create_app(settings)
         assert app.title == "custom title"
         assert app.version == "2.0"
+
+
+# ---------------------------------------------------------------------------
+# Run label columns + filter tests
+# ---------------------------------------------------------------------------
+
+
+class TestRunLabelColumns:
+    def _payload(self, trace_id: str = "lbl-1", **extra) -> dict:
+        base = {
+            "trace_id": trace_id,
+            "suite": "smoke",
+            "case": "one",
+            "input": "",
+            "output": "",
+            "exit_code": 0,
+            "duration_s": 1.0,
+            "total_tool_calls": 0,
+            "passed": True,
+            "tool_calls": [],
+            "run_metadata": {},
+            "metric_scores": {},
+        }
+        base.update(extra)
+        return base
+
+    def test_create_run_with_labels(self, app_client: TestClient) -> None:
+        payload = self._payload(
+            "lbl-2",
+            git_sha="abc123",
+            git_ref="refs/heads/main",
+            branch="main",
+            environment="ci",
+        )
+        resp = app_client.post("/runs", json=payload)
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["git_sha"] == "abc123"
+        assert data["git_ref"] == "refs/heads/main"
+        assert data["branch"] == "main"
+        assert data["environment"] == "ci"
+
+    def test_labels_default_to_none(self, app_client: TestClient) -> None:
+        resp = app_client.post("/runs", json=self._payload("lbl-3"))
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["git_sha"] is None
+        assert data["git_ref"] is None
+        assert data["branch"] is None
+        assert data["environment"] is None
+
+    def test_is_baseline_defaults_to_false(self, app_client: TestClient) -> None:
+        resp = app_client.post("/runs", json=self._payload("lbl-4"))
+        assert resp.status_code == 201
+        assert resp.json()["is_baseline"] is False
+
+    def test_filter_by_branch(self, app_client: TestClient) -> None:
+        app_client.post("/runs", json=self._payload("br-1", branch="main"))
+        app_client.post("/runs", json=self._payload("br-2", branch="feature-x"))
+        app_client.post("/runs", json=self._payload("br-3", branch="main"))
+
+        resp = app_client.get("/runs?branch=main")
+        assert resp.status_code == 200
+        trace_ids = {r["trace_id"] for r in resp.json()}
+        assert trace_ids == {"br-1", "br-3"}
+
+    def test_filter_by_git_sha(self, app_client: TestClient) -> None:
+        app_client.post("/runs", json=self._payload("sha-1", git_sha="deadbeef"))
+        app_client.post("/runs", json=self._payload("sha-2", git_sha="cafebabe"))
+
+        resp = app_client.get("/runs?git_sha=deadbeef")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["git_sha"] == "deadbeef"
+
+    def test_filter_by_environment(self, app_client: TestClient) -> None:
+        app_client.post("/runs", json=self._payload("env-1", environment="prod"))
+        app_client.post("/runs", json=self._payload("env-2", environment="staging"))
+
+        resp = app_client.get("/runs?environment=prod")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data) == 1
+        assert data[0]["environment"] == "prod"
+
+    def test_filter_no_match_returns_empty(self, app_client: TestClient) -> None:
+        app_client.post("/runs", json=self._payload("nm-1", branch="main"))
+        resp = app_client.get("/runs?branch=nonexistent")
+        assert resp.status_code == 200
+        assert resp.json() == []
