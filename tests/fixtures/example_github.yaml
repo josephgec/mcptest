@@ -1,0 +1,38 @@
+server:
+  name: mock-github
+  version: "1.0"
+
+tools:
+  - name: create_issue
+    description: Create a GitHub issue
+    input_schema:
+      type: object
+      properties:
+        repo: { type: string }
+        title: { type: string }
+        body: { type: string }
+      required: [repo, title]
+    responses:
+      - match: { repo: "acme/api" }
+        return:
+          issue_number: 42
+          url: "https://github.com/acme/api/issues/42"
+      - default: true
+        return:
+          issue_number: 1
+          url: "https://github.com/acme/fake/issues/1"
+
+  - name: list_issues
+    responses:
+      - return:
+          issues: []
+
+resources:
+  - uri: "github://acme/api/readme"
+    content: "# ACME API\nA fake readme."
+
+errors:
+  - name: rate_limited
+    tool: create_issue
+    error_code: -32000
+    message: GitHub API rate limit exceeded

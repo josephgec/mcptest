@@ -1,0 +1,91 @@
+[project]
+name = "mcptest"
+version = "0.1.0"
+description = "pytest for MCP agents — a testing framework for Model Context Protocol agents"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "Joseph Thomas", email = "josephgec@gmail.com" }]
+keywords = ["mcp", "testing", "agents", "llm", "ai", "model-context-protocol"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Testing :: Mocking",
+]
+dependencies = [
+    "mcp>=1.0.0",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "click>=8.1",
+    "rich>=13.0",
+    "anyio>=4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.1",
+]
+cloud = [
+    "fastapi>=0.110",
+    "sqlalchemy>=2.0",
+    "uvicorn>=0.27",
+]
+
+[project.scripts]
+mcptest = "mcptest.cli:main"
+
+# Note: the pytest11 entry point is wired up in Session 8 once the plugin
+# actually does something. Registering an empty plugin here makes coverage
+# miss top-level imports because pytest loads the entry-point module before
+# pytest-cov starts instrumenting.
+# [project.entry-points."pytest11"]
+# mcptest = "mcptest.pytest_plugin"
+
+[project.urls]
+Homepage = "https://github.com/josephgec/mcptest"
+Repository = "https://github.com/josephgec/mcptest"
+Issues = "https://github.com/josephgec/mcptest/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcptest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --cov=mcptest --cov-report=term-missing --cov-report=html --cov-branch"
+asyncio_mode = "auto"
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["src/mcptest"]
+branch = true
+omit = [
+    "src/mcptest/cloud/*",
+    # Stub module re-added with real coverage in Session 8.
+    "src/mcptest/pytest_plugin.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
