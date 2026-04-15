@@ -16,6 +16,7 @@ from mcptest.cloud import (
 from mcptest.cloud.models import TestRun as _TestRunOrm
 from mcptest.cloud.schemas import TestRunCreate as _TestRunCreate
 from mcptest.cloud.schemas import TestRunOut as _TestRunOut
+from mcptest.cloud.schemas import ComparisonOut as _ComparisonOut
 from mcptest.cloud.db import Base, create_all
 
 
@@ -211,6 +212,153 @@ class TestRunsEndpoints:
     ) -> None:
         resp = app_client.post("/runs", json={"trace_id": ""})
         assert resp.status_code == 422
+
+    def test_create_run_with_metric_scores(self, app_client: TestClient) -> None:
+        payload = self._payload()
+        payload["metric_scores"] = {"tool_efficiency": 0.8, "redundancy": 0.95}
+        resp = app_client.post("/runs", json=payload)
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["metric_scores"]["tool_efficiency"] == pytest.approx(0.8)
+        assert data["metric_scores"]["redundancy"] == pytest.approx(0.95)
+
+    def test_get_run_preserves_metric_scores(self, app_client: TestClient) -> None:
+        payload = self._payload()
+        payload["metric_scores"] = {"tool_efficiency": 0.75}
+        created = app_client.post("/runs", json=payload).json()
+        run_id = created["id"]
+        resp = app_client.get(f"/runs/{run_id}")
+        assert resp.status_code == 200
+        assert resp.json()["metric_scores"]["tool_efficiency"] == pytest.approx(0.75)
+
+    def test_metric_scores_defaults_to_empty_dict(
+        self, app_client: TestClient
+    ) -> None:
+        resp = app_client.post("/runs", json=self._payload())
+        assert resp.status_code == 201
+        assert resp.json()["metric_scores"] == {}
+
+
+# ---------------------------------------------------------------------------
+# POST /compare endpoint
+# ---------------------------------------------------------------------------
+
+
+class TestCompareEndpoint:
+    def _create_run(
+        self,
+        client: TestClient,
+        trace_id: str,
+        metric_scores: dict,
+        passed: bool = True,
+    ) -> int:
+        payload = {
+            "trace_id": trace_id,
+            "suite": "smoke",
+            "case": "one",
+            "input": "",
+            "output": "",
+            "exit_code": 0,
+            "duration_s": 1.0,
+            "total_tool_calls": 1,
+            "passed": passed,
+            "tool_calls": [],
+            "run_metadata": {},
+            "metric_scores": metric_scores,
+        }
+        resp = client.post("/runs", json=payload)
+        assert resp.status_code == 201
+        return resp.json()["id"]
+
+    def test_compare_no_regressions(self, app_client: TestClient) -> None:
+        base_id = self._create_run(
+            app_client, "b1", {"tool_efficiency": 0.8, "redundancy": 0.9}
+        )
+        head_id = self._create_run(
+            app_client, "h1", {"tool_efficiency": 0.85, "redundancy": 0.95}
+        )
+        resp = app_client.post("/compare", json={"base_id": base_id, "head_id": head_id})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["overall_passed"] is True
+        assert data["regression_count"] == 0
+        assert data["base_id"] == base_id
+        assert data["head_id"] == head_id
+
+    def test_compare_with_regression(self, app_client: TestClient) -> None:
+        base_id = self._create_run(
+            app_client, "b2", {"tool_efficiency": 0.9}
+        )
+        head_id = self._create_run(
+            app_client, "h2", {"tool_efficiency": 0.5}  # drop of 0.4 > threshold 0.1
+        )
+        resp = app_client.post("/compare", json={"base_id": base_id, "head_id": head_id})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["overall_passed"] is False
+        assert data["regression_count"] == 1
+        deltas = data["deltas"]
+        assert len(deltas) == 1
+        assert deltas[0]["name"] == "tool_efficiency"
+        assert deltas[0]["regressed"] is True
+
+    def test_compare_with_custom_threshold(self, app_client: TestClient) -> None:
+        base_id = self._create_run(app_client, "b3", {"tool_efficiency": 0.9})
+        head_id = self._create_run(app_client, "h3", {"tool_efficiency": 0.85})  # drop 0.05
+        # Default threshold 0.1 — not a regression.
+        resp = app_client.post(
+            "/compare",
+            json={"base_id": base_id, "head_id": head_id},
+        )
+        assert resp.json()["overall_passed"] is True
+        # With tight threshold 0.02 — should become a regression.
+        resp2 = app_client.post(
+            "/compare",
+            json={
+                "base_id": base_id,
+                "head_id": head_id,
+                "thresholds": {"tool_efficiency": 0.02},
+            },
+        )
+        assert resp2.json()["overall_passed"] is False
+
+    def test_compare_base_not_found(self, app_client: TestClient) -> None:
+        head_id = self._create_run(app_client, "h4", {})
+        resp = app_client.post("/compare", json={"base_id": 99999, "head_id": head_id})
+        assert resp.status_code == 404
+
+    def test_compare_head_not_found(self, app_client: TestClient) -> None:
+        base_id = self._create_run(app_client, "b5", {})
+        resp = app_client.post("/compare", json={"base_id": base_id, "head_id": 99999})
+        assert resp.status_code == 404
+
+    def test_compare_empty_metric_scores(self, app_client: TestClient) -> None:
+        base_id = self._create_run(app_client, "b6", {})
+        head_id = self._create_run(app_client, "h6", {})
+        resp = app_client.post("/compare", json={"base_id": base_id, "head_id": head_id})
+        assert resp.status_code == 200
+        assert resp.json()["deltas"] == []
+        assert resp.json()["overall_passed"] is True
+
+    def test_compare_delta_fields(self, app_client: TestClient) -> None:
+        base_id = self._create_run(app_client, "b7", {"tool_efficiency": 0.8})
+        head_id = self._create_run(app_client, "h7", {"tool_efficiency": 0.6})
+        resp = app_client.post("/compare", json={"base_id": base_id, "head_id": head_id})
+        delta = resp.json()["deltas"][0]
+        assert delta["name"] == "tool_efficiency"
+        assert delta["base_score"] == pytest.approx(0.8)
+        assert delta["head_score"] == pytest.approx(0.6)
+        assert delta["delta"] == pytest.approx(-0.2)
+        assert delta["regressed"] is True
+        assert "label" in delta
+
+    def test_compare_label_from_registry(self, app_client: TestClient) -> None:
+        base_id = self._create_run(app_client, "b8", {"tool_efficiency": 0.9})
+        head_id = self._create_run(app_client, "h8", {"tool_efficiency": 0.9})
+        resp = app_client.post("/compare", json={"base_id": base_id, "head_id": head_id})
+        delta = resp.json()["deltas"][0]
+        # tool_efficiency.label == "Tool Efficiency"
+        assert delta["label"] == "Tool Efficiency"
 
 
 # ---------------------------------------------------------------------------

@@ -11,6 +11,8 @@ from click.testing import CliRunner
 
 from mcptest.cli.main import main
 from mcptest.cli.scaffold import ScaffoldError, scaffold_project
+from mcptest.mock_server.recorder import RecordedCall
+from mcptest.runner.trace import Trace
 
 
 # ---------------------------------------------------------------------------
@@ -426,3 +428,146 @@ class TestRecordCommand:
             ],
         )
         assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# `mcptest run` — metrics in JSON output
+# ---------------------------------------------------------------------------
+
+
+class TestRunMetricsOutput:
+    def test_run_json_includes_metric_summary(self, tmp_path: Path) -> None:
+        _write_project(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["run", str(tmp_path / "tests"), "--json"]
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert "metric_summary" in payload
+        assert isinstance(payload["metric_summary"], dict)
+        # Should include at least fixture-independent metrics.
+        assert "tool_efficiency" in payload["metric_summary"]
+
+    def test_run_json_case_includes_metrics(self, tmp_path: Path) -> None:
+        _write_project(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["run", str(tmp_path / "tests"), "--json"]
+        )
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        case = payload["cases"][0]
+        assert "metrics" in case
+        assert isinstance(case["metrics"], list)
+        assert len(case["metrics"]) > 0
+        m = case["metrics"][0]
+        assert "name" in m
+        assert "score" in m
+        assert "label" in m
+
+    def test_run_json_metric_scores_in_0_1_range(self, tmp_path: Path) -> None:
+        _write_project(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["run", str(tmp_path / "tests"), "--json"]
+        )
+        payload = json.loads(result.output)
+        for name, score in payload["metric_summary"].items():
+            assert 0.0 <= score <= 1.0, f"{name} score {score} out of range"
+
+
+# ---------------------------------------------------------------------------
+# `mcptest compare`
+# ---------------------------------------------------------------------------
+
+
+def _make_trace_file(path: Path, tools: list[str], trace_id: str) -> Path:
+    calls = [
+        RecordedCall(tool=t, arguments={}, result={"ok": True})
+        for t in tools
+    ]
+    t = Trace(trace_id=trace_id, tool_calls=calls)
+    t.save(str(path))
+    return path
+
+
+class TestCompareCommand:
+    def test_identical_traces_passes(self, tmp_path: Path) -> None:
+        f = _make_trace_file(tmp_path / "t.json", ["a", "b"], "t")
+        runner = CliRunner()
+        result = runner.invoke(main, ["compare", str(f), str(f)])
+        assert result.exit_code == 0
+        assert "stable" in result.output.lower() or "0 regression" in result.output.lower()
+
+    def test_worse_head_shows_regression(self, tmp_path: Path) -> None:
+        base = _make_trace_file(tmp_path / "base.json", ["a", "b", "c"], "base")
+        head = _make_trace_file(tmp_path / "head.json", ["a", "a", "a"], "head")
+        runner = CliRunner()
+        result = runner.invoke(main, ["compare", str(base), str(head)])
+        assert result.exit_code == 0  # no --ci, so exit 0 even with regressions
+        assert "REGRESSED" in result.output
+
+    def test_ci_flag_exits_nonzero_on_regression(self, tmp_path: Path) -> None:
+        base = _make_trace_file(tmp_path / "base.json", ["a", "b", "c"], "base")
+        head = _make_trace_file(tmp_path / "head.json", ["a", "a", "a"], "head")
+        runner = CliRunner()
+        result = runner.invoke(main, ["compare", str(base), str(head), "--ci"])
+        assert result.exit_code == 1
+
+    def test_ci_flag_exits_zero_when_no_regression(self, tmp_path: Path) -> None:
+        f = _make_trace_file(tmp_path / "t.json", ["a", "b"], "t")
+        runner = CliRunner()
+        result = runner.invoke(main, ["compare", str(f), str(f), "--ci"])
+        assert result.exit_code == 0
+
+    def test_json_output_structure(self, tmp_path: Path) -> None:
+        base = _make_trace_file(tmp_path / "base.json", ["a", "b"], "base")
+        head = _make_trace_file(tmp_path / "head.json", ["a", "b"], "head")
+        runner = CliRunner()
+        result = runner.invoke(main, ["compare", str(base), str(head), "--json"])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "base_trace_id" in data
+        assert "head_trace_id" in data
+        assert "deltas" in data
+        assert "overall_passed" in data
+        assert "regression_count" in data
+
+    def test_json_output_ci_regression(self, tmp_path: Path) -> None:
+        base = _make_trace_file(tmp_path / "base.json", ["a", "b", "c"], "base")
+        head = _make_trace_file(tmp_path / "head.json", ["a", "a", "a"], "head")
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["compare", str(base), str(head), "--json", "--ci"]
+        )
+        assert result.exit_code == 1
+        data = json.loads(result.output)
+        assert data["overall_passed"] is False
+
+    def test_threshold_flag_loosens_regression_detection(self, tmp_path: Path) -> None:
+        base = _make_trace_file(tmp_path / "base.json", ["a", "b"], "base")
+        head = _make_trace_file(tmp_path / "head.json", ["a", "a"], "head")
+        runner = CliRunner()
+        # With a very loose threshold, no regressions.
+        result = runner.invoke(
+            main, ["compare", str(base), str(head), "--threshold", "0.99", "--ci"]
+        )
+        assert result.exit_code == 0
+
+    def test_missing_base_trace_file_errors(self, tmp_path: Path) -> None:
+        head = _make_trace_file(tmp_path / "head.json", ["a"], "head")
+        runner = CliRunner()
+        result = runner.invoke(
+            main, ["compare", str(tmp_path / "missing.json"), str(head)]
+        )
+        # click.Path(exists=True) causes click to reject the missing file.
+        assert result.exit_code != 0
+
+    def test_improved_metric_shown(self, tmp_path: Path) -> None:
+        base = _make_trace_file(tmp_path / "base.json", ["a", "a", "a"], "base")
+        head = _make_trace_file(tmp_path / "head.json", ["a", "b", "c"], "head")
+        runner = CliRunner()
+        result = runner.invoke(main, ["compare", str(base), str(head)])
+        assert result.exit_code == 0
+        assert "IMPROVED" in result.output

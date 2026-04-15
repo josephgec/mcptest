@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json as json_module
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +43,7 @@ class CaseResult:
     trace: Trace
     assertion_results: list[AssertionResult]
     error: str | None = None
+    metrics: list[Any] = field(default_factory=list)  # list[MetricResult]
 
     @property
     def passed(self) -> bool:
@@ -60,6 +61,7 @@ class CaseResult:
             "error": self.error,
             "trace": self.trace.to_dict(),
             "assertions": [r.to_dict() for r in self.assertion_results],
+            "metrics": [m.to_dict() for m in self.metrics],
         }
 
 
@@ -158,11 +160,21 @@ def run_command(path: str, ci: bool, json_output: bool, fail_fast: bool) -> None
                 break
 
     if json_output:
+        # Aggregate per-metric averages across all cases.
+        metric_totals: dict[str, list[float]] = {}
+        for r in all_results:
+            for m in r.metrics:
+                metric_totals.setdefault(m.name, []).append(m.score)
+        metric_summary = {
+            name: sum(scores) / len(scores)
+            for name, scores in metric_totals.items()
+        }
         payload = {
             "passed": sum(1 for r in all_results if r.passed),
             "failed": sum(1 for r in all_results if not r.passed),
             "total": len(all_results),
             "cases": [r.to_dict() for r in all_results],
+            "metric_summary": metric_summary,
         }
         click.echo(json_module.dumps(payload, indent=2, default=str))
     else:
@@ -223,11 +235,15 @@ def _run_case(runner: Runner, suite: TestSuite, case: TestCase) -> CaseResult:
         )
 
     results = check_all(assertions, trace)
+    from mcptest.metrics import compute_all as _compute_all
+
+    metric_results = _compute_all(trace)
     return CaseResult(
         suite_name=suite.name,
         case_name=case.name,
         trace=trace,
         assertion_results=results,
+        metrics=metric_results,
     )
 
 
@@ -261,6 +277,19 @@ def _render_results(console: Console, results: list[CaseResult]) -> None:
     console.print(
         f"\n[bold]{passed} passed[/bold], [bold red]{failed} failed[/bold red] ({len(results)} total)"
     )
+
+    # Metric summary line (averaged across all cases that have metrics).
+    metric_totals: dict[str, list[float]] = {}
+    for r in results:
+        for m in r.metrics:
+            metric_totals.setdefault(m.name, []).append(m.score)
+    if metric_totals:
+        parts: list[str] = []
+        for name in sorted(metric_totals):
+            avg = sum(metric_totals[name]) / len(metric_totals[name])
+            color = "green" if avg >= 0.8 else "yellow" if avg >= 0.5 else "red"
+            parts.append(f"[{color}]{name}: {avg:.2f}[/{color}]")
+        console.print("Metrics: " + "  ".join(parts))
 
 
 # ---------------------------------------------------------------------------
@@ -617,6 +646,109 @@ def metrics_command(
         table.add_row(r.name, score_str, r.label, details_str or "—")
 
     console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# compare — diff two trace JSON files by metric scores
+# ---------------------------------------------------------------------------
+
+
+def _render_comparison(console: Console, report: Any) -> None:
+    """Render a ComparisonReport to the Rich console as a table."""
+    table = Table(title="mcptest compare", show_lines=False)
+    table.add_column("Metric")
+    table.add_column("Base", justify="right")
+    table.add_column("Head", justify="right")
+    table.add_column("Delta", justify="right")
+    table.add_column("Status", justify="center")
+
+    for delta in report.deltas:
+        if delta.regressed:
+            status = "[red]REGRESSED[/red]"
+            delta_str = f"[red]{delta.delta:+.3f}[/red]"
+        elif delta.delta >= 0.05:
+            status = "[green]IMPROVED[/green]"
+            delta_str = f"[green]{delta.delta:+.3f}[/green]"
+        else:
+            status = "[dim]stable[/dim]"
+            delta_str = f"[dim]{delta.delta:+.3f}[/dim]"
+
+        table.add_row(
+            delta.name,
+            f"{delta.base_score:.3f}",
+            f"{delta.head_score:.3f}",
+            delta_str,
+            status,
+        )
+
+    console.print(table)
+    regressions = len(report.regressions)
+    improvements = len(report.improvements)
+    console.print(
+        f"\n[bold]{regressions} regression(s)[/bold], {improvements} improvement(s)"
+        + (" — [red]FAILED[/red]" if not report.overall_passed else " — [green]OK[/green]")
+    )
+
+
+@click.command(help="Compare two trace JSON files and report metric regressions.")
+@click.argument(
+    "base_trace",
+    type=click.Path(exists=True, dir_okay=False),
+)
+@click.argument(
+    "head_trace",
+    type=click.Path(exists=True, dir_okay=False),
+)
+@click.option(
+    "--threshold",
+    default=0.1,
+    type=float,
+    help="Regression threshold applied to all metrics (default: 0.1).",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Emit machine-readable JSON on stdout instead of a human-friendly table.",
+)
+@click.option(
+    "--ci",
+    is_flag=True,
+    help="Exit non-zero if any metric regressed beyond the threshold.",
+)
+def compare_command(
+    base_trace: str,
+    head_trace: str,
+    threshold: float,
+    json_output: bool,
+    ci: bool,
+) -> None:
+    from mcptest.compare import DEFAULT_THRESHOLDS, compare_traces
+
+    console = Console(stderr=json_output)
+
+    try:
+        base = Trace.load(base_trace)
+    except Exception as exc:
+        console.print(f"[red]error:[/red] could not load base trace: {exc}")
+        sys.exit(1)
+    try:
+        head = Trace.load(head_trace)
+    except Exception as exc:
+        console.print(f"[red]error:[/red] could not load head trace: {exc}")
+        sys.exit(1)
+
+    # Apply the single CLI threshold to every known metric.
+    thresholds = {name: threshold for name in DEFAULT_THRESHOLDS}
+    report = compare_traces(base, head, thresholds=thresholds)
+
+    if json_output:
+        click.echo(json_module.dumps(report.to_dict(), indent=2, default=str))
+    else:
+        _render_comparison(console, report)
+
+    if ci and not report.overall_passed:
+        sys.exit(1)
 
 
 @click.command(help="List the pre-built test packs that ship with mcptest.")

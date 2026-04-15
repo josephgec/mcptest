@@ -94,6 +94,128 @@ class TestFormatComment:
         assert "error:" not in body  # no top-level error line
         assert "tool_called" in body
 
+    # --- Metrics section ---
+
+    def test_metrics_section_present_when_summary_given(self) -> None:
+        payload = dict(_PAYLOAD_OK)
+        payload["metric_summary"] = {"tool_efficiency": 0.9, "redundancy": 0.75}
+        body = format_comment(payload)
+        assert "### Metrics" in body
+        assert "tool_efficiency" in body
+        assert "redundancy" in body
+
+    def test_metrics_section_absent_when_no_summary(self) -> None:
+        body = format_comment(_PAYLOAD_OK)
+        assert "### Metrics" not in body
+
+    def test_metrics_green_indicator_for_high_score(self) -> None:
+        payload = dict(_PAYLOAD_OK)
+        payload["metric_summary"] = {"tool_efficiency": 0.95}
+        body = format_comment(payload)
+        assert "🟢" in body
+
+    def test_metrics_yellow_indicator_for_medium_score(self) -> None:
+        payload = dict(_PAYLOAD_OK)
+        payload["metric_summary"] = {"tool_efficiency": 0.6}
+        body = format_comment(payload)
+        assert "🟡" in body
+
+    def test_metrics_red_indicator_for_low_score(self) -> None:
+        payload = dict(_PAYLOAD_OK)
+        payload["metric_summary"] = {"tool_efficiency": 0.3}
+        body = format_comment(payload)
+        assert "🔴" in body
+
+    def test_metrics_score_formatted_to_3dp(self) -> None:
+        payload = dict(_PAYLOAD_OK)
+        payload["metric_summary"] = {"tool_efficiency": 0.12345}
+        body = format_comment(payload)
+        assert "0.123" in body
+
+    def test_metrics_sorted_alphabetically(self) -> None:
+        payload = dict(_PAYLOAD_OK)
+        payload["metric_summary"] = {"z_metric": 0.9, "a_metric": 0.8}
+        body = format_comment(payload)
+        a_pos = body.index("a_metric")
+        z_pos = body.index("z_metric")
+        assert a_pos < z_pos
+
+    # --- Comparison / regression section ---
+
+    def test_comparison_section_with_regression(self) -> None:
+        payload = dict(_PAYLOAD_OK)
+        payload["comparison"] = {
+            "deltas": [
+                {
+                    "name": "tool_efficiency",
+                    "base_score": 0.9,
+                    "head_score": 0.5,
+                    "delta": -0.4,
+                    "regressed": True,
+                }
+            ]
+        }
+        body = format_comment(payload)
+        assert "Metric Regressions" in body
+        assert "tool_efficiency" in body
+        assert "⚠️" in body
+        assert "0.900" in body
+        assert "0.500" in body
+
+    def test_comparison_section_absent_when_no_regressions(self) -> None:
+        payload = dict(_PAYLOAD_OK)
+        payload["comparison"] = {
+            "deltas": [
+                {
+                    "name": "tool_efficiency",
+                    "base_score": 0.8,
+                    "head_score": 0.9,
+                    "delta": 0.1,
+                    "regressed": False,
+                }
+            ]
+        }
+        body = format_comment(payload)
+        assert "Metric Regressions" not in body
+
+    def test_comparison_section_absent_when_no_comparison_key(self) -> None:
+        body = format_comment(_PAYLOAD_OK)
+        assert "Metric Regressions" not in body
+
+    def test_comparison_shows_delta_value(self) -> None:
+        payload = dict(_PAYLOAD_OK)
+        payload["comparison"] = {
+            "deltas": [
+                {
+                    "name": "redundancy",
+                    "base_score": 1.0,
+                    "head_score": 0.6,
+                    "delta": -0.4,
+                    "regressed": True,
+                }
+            ]
+        }
+        body = format_comment(payload)
+        assert "-0.400" in body
+
+    def test_metrics_and_comparison_coexist(self) -> None:
+        payload = dict(_PAYLOAD_OK)
+        payload["metric_summary"] = {"tool_efficiency": 0.85}
+        payload["comparison"] = {
+            "deltas": [
+                {
+                    "name": "redundancy",
+                    "base_score": 1.0,
+                    "head_score": 0.5,
+                    "delta": -0.5,
+                    "regressed": True,
+                }
+            ]
+        }
+        body = format_comment(payload)
+        assert "### Metrics" in body
+        assert "### Metric Regressions" in body
+
 
 class TestBuildBadge:
     def test_all_passing(self) -> None:

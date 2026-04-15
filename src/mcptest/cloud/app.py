@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from mcptest.cloud.config import Settings
 from mcptest.cloud.db import create_all, make_engine, make_session_factory
-from mcptest.cloud.routers import health, runs
+from mcptest.cloud.routers import compare, health, runs
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -42,5 +42,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(runs.router)
+    app.include_router(compare.router)
 
     return app

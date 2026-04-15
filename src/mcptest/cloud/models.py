@@ -39,6 +39,7 @@ class TestRun(Base):
     agent_error: Mapped[str | None] = mapped_column(String, nullable=True)
     tool_calls: Mapped[list[Any]] = mapped_column(JSON, default=list)
     run_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    metric_scores: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now, nullable=False
     )

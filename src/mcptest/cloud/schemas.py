@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class TestRunBase(BaseModel):
@@ -21,6 +21,15 @@ class TestRunBase(BaseModel):
     agent_error: str | None = None
     tool_calls: list[dict[str, Any]] = Field(default_factory=list)
     run_metadata: dict[str, Any] = Field(default_factory=dict)
+    metric_scores: dict[str, float] = Field(default_factory=dict)
+
+    @field_validator("metric_scores", mode="before")
+    @classmethod
+    def _coerce_metric_scores(cls, v: Any) -> dict[str, float]:
+        """Accept None from ORM rows that were created before this column existed."""
+        if v is None:
+            return {}
+        return v
 
 
 class TestRunCreate(TestRunBase):
@@ -40,3 +49,32 @@ class HealthStatus(BaseModel):
     status: str = "ok"
     service: str = "mcptest-cloud"
     version: str = "0.1.0"
+
+
+class ComparisonDelta(BaseModel):
+    """Per-metric delta between a base and head run."""
+
+    name: str
+    label: str
+    base_score: float
+    head_score: float
+    delta: float
+    regressed: bool
+
+
+class ComparisonOut(BaseModel):
+    """Response body for POST /compare."""
+
+    base_id: int
+    head_id: int
+    deltas: list[ComparisonDelta]
+    overall_passed: bool
+    regression_count: int
+
+
+class CompareRequest(BaseModel):
+    """Request body for POST /compare."""
+
+    base_id: int
+    head_id: int
+    thresholds: dict[str, float] | None = None
