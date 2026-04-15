@@ -21,8 +21,12 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     fixture_path = args[0]
+    from mcptest.mock_server.recorder import default_call_log
+
     try:
-        server = MockMCPServer.from_fixture_path(fixture_path)
+        server = MockMCPServer.from_fixture_path(
+            fixture_path, call_log=default_call_log()
+        )
     except Exception as exc:
         print(f"mcptest: could not load fixture {fixture_path}: {exc}", file=sys.stderr)
         return 1
