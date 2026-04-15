@@ -9,6 +9,7 @@ from mcptest.cli.commands import (
     capture_command,
     cloud_push_command,
     compare_command,
+    config_command,
     conformance_command,
     coverage_command,
     diff_command,
@@ -38,8 +39,15 @@ from mcptest.cli.github import badge_command, github_comment_command
     )
 )
 @click.version_option(__version__, prog_name="mcptest")
-def main() -> None:  # pragma: no cover - click entry
-    pass
+@click.pass_context
+def main(ctx: click.Context) -> None:  # pragma: no cover - click entry
+    ctx.ensure_object(dict)
+    from mcptest.config import load_config
+    from mcptest.plugins import load_plugins
+
+    config = load_config()
+    ctx.obj["config"] = config
+    ctx.obj["loaded_plugins"] = load_plugins(config)
 
 
 main.add_command(init_command, name="init")
@@ -64,6 +72,7 @@ main.add_command(conformance_command, name="conformance")
 main.add_command(capture_command, name="capture")
 main.add_command(docs_command, name="docs")
 main.add_command(explain_command, name="explain")
+main.add_command(config_command, name="config")
 
 
 if __name__ == "__main__":  # pragma: no cover

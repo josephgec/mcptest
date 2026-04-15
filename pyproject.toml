@@ -53,6 +53,19 @@ mcptest = "mcptest.cli:main"
 [project.entry-points."pytest11"]
 mcptest = "mcptest.pytest_plugin"
 
+# Third-party packages can extend mcptest's registries by declaring entry
+# points under the groups below.  Each value must be a dotted import path
+# to a module that calls the appropriate registration decorator when imported.
+#
+#   [project.entry-points."mcptest.assertions"]
+#   my_assertion = "my_package.assertions"
+#
+#   [project.entry-points."mcptest.metrics"]
+#   my_metric = "my_package.metrics"
+#
+#   [project.entry-points."mcptest.exporters"]
+#   my_exporter = "my_package.exporters"
+
 [project.urls]
 Homepage = "https://github.com/josephgec/mcptest"
 Repository = "https://github.com/josephgec/mcptest"

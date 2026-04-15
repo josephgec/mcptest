@@ -73,6 +73,10 @@ class _MetricBase:
         raise NotImplementedError
 
 
+#: Public base class alias for plugin authors.
+Metric = _MetricBase
+
+
 def compute_all(
     trace: Trace,
     *,

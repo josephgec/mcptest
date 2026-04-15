@@ -155,7 +155,8 @@ def init_command(path: str, force: bool) -> None:
 @click.command(help="Run test files under PATH (default: tests/).")
 @click.argument(
     "path",
-    default="tests",
+    default=None,
+    required=False,
     type=click.Path(exists=False, resolve_path=True),
 )
 @click.option("--ci", is_flag=True, help="Exit non-zero on any failure.")
@@ -202,12 +203,12 @@ def init_command(path: str, force: bool) -> None:
     "-j",
     "--parallel",
     "parallel_workers",
-    default=1,
+    default=None,
     type=int,
     help="Run cases in parallel (0 = auto-detect CPU count, 1 = serial).",
 )
 def run_command(
-    path: str,
+    path: str | None,
     ci: bool,
     json_output: bool,
     format_: str,
@@ -215,8 +216,34 @@ def run_command(
     fail_fast: bool,
     retry_override: int | None,
     tolerance_override: float | None,
-    parallel_workers: int,
+    parallel_workers: int | None,
 ) -> None:
+    from mcptest.config import McpTestConfig
+
+    try:
+        _ctx = click.get_current_context()
+        _config: McpTestConfig = (_ctx.obj or {}).get("config") or McpTestConfig()
+    except RuntimeError:
+        _config = McpTestConfig()
+
+    # Resolve path: CLI arg > config.test_paths[0] > "tests"
+    if path is None:
+        _base = _config.test_paths[0] if _config.test_paths else "tests"
+        path = str(Path(_base).resolve())
+
+    # Resolve parallel workers: CLI arg > config.parallel > 1 (serial)
+    if parallel_workers is None:
+        parallel_workers = _config.parallel if _config.parallel is not None else 1
+
+    # Resolve fail-fast: CLI flag > config.fail_fast > False
+    fail_fast = fail_fast or bool(_config.fail_fast)
+
+    # Resolve retry / tolerance: CLI arg > config field > None (per-case default)
+    if retry_override is None:
+        retry_override = _config.retry
+    if tolerance_override is None:
+        tolerance_override = _config.tolerance
+
     # Backwards compat: --json flag is equivalent to --format json.
     if json_output:
         format_ = "json"
@@ -790,7 +817,7 @@ def _run_all_cases(path: str) -> list[tuple[str, str, Trace]]:
 )
 @click.option(
     "--baseline-dir",
-    default=".mcptest/baselines",
+    default=None,
     type=click.Path(file_okay=False),
     help="Where to write baseline files.",
 )
@@ -799,7 +826,18 @@ def _run_all_cases(path: str) -> list[tuple[str, str, Trace]]:
     is_flag=True,
     help="Overwrite existing baselines (otherwise existing baselines are kept).",
 )
-def snapshot_command(path: str, baseline_dir: str, update: bool) -> None:
+def snapshot_command(path: str, baseline_dir: str | None, update: bool) -> None:
+    from mcptest.config import McpTestConfig
+
+    try:
+        _ctx = click.get_current_context()
+        _config: McpTestConfig = (_ctx.obj or {}).get("config") or McpTestConfig()
+    except RuntimeError:
+        _config = McpTestConfig()
+
+    if baseline_dir is None:
+        baseline_dir = _config.baseline_dir or ".mcptest/baselines"
+
     console = Console()
     store = BaselineStore(baseline_dir)
     store.ensure()
@@ -836,7 +874,7 @@ def snapshot_command(path: str, baseline_dir: str, update: bool) -> None:
 )
 @click.option(
     "--baseline-dir",
-    default=".mcptest/baselines",
+    default=None,
     type=click.Path(file_okay=False),
     help="Directory containing baseline trace files.",
 )
@@ -849,10 +887,21 @@ def snapshot_command(path: str, baseline_dir: str, update: bool) -> None:
 @click.option("--ci", is_flag=True, help="Exit non-zero if any regression is found.")
 def diff_command(
     path: str,
-    baseline_dir: str,
+    baseline_dir: str | None,
     latency_threshold_pct: float,
     ci: bool,
 ) -> None:
+    from mcptest.config import McpTestConfig
+
+    try:
+        _ctx = click.get_current_context()
+        _config: McpTestConfig = (_ctx.obj or {}).get("config") or McpTestConfig()
+    except RuntimeError:
+        _config = McpTestConfig()
+
+    if baseline_dir is None:
+        baseline_dir = _config.baseline_dir or ".mcptest/baselines"
+
     console = Console()
     store = BaselineStore(baseline_dir)
 
@@ -1515,9 +1564,8 @@ def generate_command(
 )
 @click.option(
     "--threshold",
-    default=0.0,
+    default=None,
     type=float,
-    show_default=True,
     help="Exit non-zero if overall_score is below this value (CI gating).",
 )
 @click.option(
@@ -1530,10 +1578,20 @@ def coverage_command(
     results_json: str | None,
     fixture_paths: tuple[str, ...],
     suite_paths: tuple[str, ...],
-    threshold: float,
+    threshold: float | None,
     json_output: bool,
 ) -> None:
+    from mcptest.config import McpTestConfig
     from mcptest.coverage import analyze_coverage
+
+    try:
+        _ctx = click.get_current_context()
+        _config: McpTestConfig = (_ctx.obj or {}).get("config") or McpTestConfig()
+    except RuntimeError:
+        _config = McpTestConfig()
+
+    # Resolve threshold: CLI arg > config.fail_under > 0.0 (no gate)
+    effective_threshold = threshold if threshold is not None else (_config.fail_under or 0.0)
 
     console = Console(stderr=json_output)
 
@@ -1590,11 +1648,11 @@ def coverage_command(
     else:
         _render_coverage(console, report)
 
-    if threshold > 0.0 and report.overall_score < threshold:
+    if effective_threshold > 0.0 and report.overall_score < effective_threshold:
         if not json_output:
             console.print(
                 f"[red]✗[/red] coverage {report.overall_score:.1%}"
-                f" is below threshold {threshold:.1%}"
+                f" is below threshold {effective_threshold:.1%}"
             )
         sys.exit(1)
 
@@ -2235,3 +2293,54 @@ def explain_command(name: str) -> None:
     from mcptest.docs.terminal import explain
 
     click.echo(explain(name))
+
+
+# ---------------------------------------------------------------------------
+# config — show the resolved project configuration
+# ---------------------------------------------------------------------------
+
+
+@click.command(help="Show the resolved mcptest configuration and loaded plugins.")
+def config_command() -> None:
+    import dataclasses
+
+    from mcptest.config import McpTestConfig, load_config
+    from mcptest.plugins import load_plugins
+
+    try:
+        _ctx = click.get_current_context()
+        config: McpTestConfig = (_ctx.obj or {}).get("config") or load_config()
+        loaded_plugins: list[str] = (_ctx.obj or {}).get("loaded_plugins") or load_plugins(config)
+    except RuntimeError:
+        config = load_config()
+        loaded_plugins = load_plugins(config)
+
+    console = Console()
+
+    if config.config_file:
+        console.print(f"[bold]Config file:[/bold] {config.config_file}")
+    else:
+        console.print("[dim]No config file found (using defaults)[/dim]")
+
+    console.print()
+
+    # Build a display dict — omit internal config_file field and empty values.
+    d = dataclasses.asdict(config)
+    d.pop("config_file", None)
+    d = {k: v for k, v in d.items() if v is not None and v != [] and v != {}}
+
+    if d:
+        console.print("[bold]Settings:[/bold]")
+        for key, value in sorted(d.items()):
+            console.print(f"  [cyan]{key}[/cyan]: {value}")
+    else:
+        console.print("[dim]No settings configured (all defaults)[/dim]")
+
+    console.print()
+
+    if loaded_plugins:
+        console.print("[bold]Loaded plugins:[/bold]")
+        for p in loaded_plugins:
+            console.print(f"  [green]✓[/green] {p}")
+    else:
+        console.print("[dim]No plugins loaded[/dim]")

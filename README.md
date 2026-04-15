@@ -325,6 +325,107 @@ The generated site includes:
 - **[Conformance Checks Reference](docs/reference/checks.md)** — 19 protocol checks with severity
 - **[CLI Reference](docs/reference/cli.md)** — every command with full option tables
 
+## Configuration
+
+Place a `mcptest.yaml` file in your project root (or any parent directory) to
+set defaults for all CLI flags.  `mcptest` walks up from the current directory
+to find it — the same discovery strategy git uses for `.gitignore`.
+
+```yaml
+# mcptest.yaml
+test_paths: ["tests/"]
+fixture_paths: ["fixtures/"]
+baseline_dir: .mcptest/baselines
+
+retry: 3          # default retry count for every case
+tolerance: 0.8    # default pass-rate tolerance (0.0–1.0)
+parallel: 4       # default worker count (-j flag)
+fail_fast: false  # stop at first failure
+fail_under: 0.0   # coverage gate (mcptest coverage --threshold)
+
+# Per-metric thresholds used by mcptest scorecard
+thresholds:
+  tool_efficiency: 0.7
+  redundancy: 0.3
+
+# Plugins to load at startup (dotted module name or file path)
+plugins:
+  - my_company.mcptest_extensions
+  - ./custom_assertions.py
+
+# Cloud settings
+cloud:
+  url: https://mcptest.example.com
+  api_key_env: MCPTEST_API_KEY
+```
+
+CLI flags always override config-file values.  To inspect the resolved
+configuration and loaded plugins:
+
+```bash
+mcptest config
+```
+
+## Plugins
+
+Plugins let you add custom assertions, metrics, and exporters without forking
+mcptest.  Any module that calls the registration decorators at import time is
+a valid plugin.
+
+**Load via config file** (dotted module name or file path):
+
+```yaml
+# mcptest.yaml
+plugins:
+  - my_company.mcptest_extensions  # installed package
+  - ./custom_assertions.py         # local file
+```
+
+**Load via `confmcptest.py`** (auto-discovered, like pytest's `conftest.py`):
+
+```python
+# tests/confmcptest.py
+from mcptest.assertions.base import register_assertion, TraceAssertion
+from mcptest.runner.trace import Trace
+from mcptest.assertions.base import AssertionResult
+
+@register_assertion
+class response_is_json(TraceAssertion):
+    yaml_key = "response_is_json"
+
+    def check(self, trace: Trace) -> AssertionResult:
+        ok = all(
+            "json" in (call.result or "").lower()
+            for call in trace.tool_calls
+        )
+        return AssertionResult(
+            passed=ok,
+            name=self.yaml_key,
+            message="all tool responses are JSON" if ok else "non-JSON response found",
+        )
+```
+
+**Load via entry points** (for distributable packages):
+
+```toml
+# pyproject.toml of your plugin package
+[project.entry-points."mcptest.assertions"]
+my_assertions = "my_package.assertions"
+
+[project.entry-points."mcptest.metrics"]
+my_metrics = "my_package.metrics"
+
+[project.entry-points."mcptest.exporters"]
+my_exporter = "my_package.exporters"
+```
+
+Once installed, your assertions are available by `yaml_key` in any test YAML:
+
+```yaml
+assertions:
+  - response_is_json: true
+```
+
 ## Status
 
 Alpha. The core loop (mock server → runner → assertions → CLI) is functional; cloud
