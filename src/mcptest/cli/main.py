@@ -8,6 +8,7 @@ from mcptest import __version__
 from mcptest.cli.commands import (
     cloud_push_command,
     compare_command,
+    coverage_command,
     diff_command,
     export_command,
     generate_command,
@@ -50,6 +51,7 @@ main.add_command(metrics_command, name="metrics")
 main.add_command(compare_command, name="compare")
 main.add_command(cloud_push_command, name="cloud-push")
 main.add_command(generate_command, name="generate")
+main.add_command(coverage_command, name="coverage")
 
 
 if __name__ == "__main__":  # pragma: no cover

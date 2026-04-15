@@ -1196,3 +1196,184 @@ def generate_command(
         )
     else:
         click.echo(output_yaml, nl=False)
+
+
+# ---------------------------------------------------------------------------
+# coverage — fixture surface area coverage analysis
+# ---------------------------------------------------------------------------
+
+
+@click.command(
+    help=(
+        "Analyse fixture surface area coverage from a mcptest results JSON file.\n\n"
+        "Loads fixtures, extracts traces from RESULTS_JSON (a full mcptest run "
+        "output or a single trace JSON), and reports which tool responses and "
+        "error scenarios were exercised.\n\n"
+        "Use --suite to supply test suite YAML files so that inject_error "
+        "declarations are included in the error coverage count.\n\n"
+        "Exit code is 1 if overall_score < --threshold (default: always 0)."
+    )
+)
+@click.argument(
+    "results_json",
+    required=False,
+    type=click.Path(exists=True, dir_okay=False),
+)
+@click.option(
+    "--fixture",
+    "fixture_paths",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Fixture YAML to analyse (repeatable).",
+)
+@click.option(
+    "--suite",
+    "suite_paths",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Test suite YAML for error-injection tracking (repeatable).",
+)
+@click.option(
+    "--threshold",
+    default=0.0,
+    type=float,
+    show_default=True,
+    help="Exit non-zero if overall_score is below this value (CI gating).",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Emit machine-readable JSON on stdout instead of a table.",
+)
+def coverage_command(
+    results_json: str | None,
+    fixture_paths: tuple[str, ...],
+    suite_paths: tuple[str, ...],
+    threshold: float,
+    json_output: bool,
+) -> None:
+    from mcptest.coverage import analyze_coverage
+
+    console = Console(stderr=json_output)
+
+    # --- Load fixtures ---
+    if not fixture_paths:
+        console.print("[red]error:[/red] at least one --fixture is required")
+        sys.exit(1)
+
+    fixtures = []
+    for fp in fixture_paths:
+        try:
+            fixtures.append(load_fixture(fp))
+        except FixtureLoadError as exc:
+            console.print(f"[red]error:[/red] could not load fixture {fp}: {exc}")
+            sys.exit(1)
+
+    # --- Load test suites for inject_error tracking ---
+    test_cases = []
+    for sp in suite_paths:
+        try:
+            suite = load_test_suite(sp)
+            test_cases.extend(suite.cases)
+        except TestSuiteLoadError as exc:
+            console.print(f"[red]error:[/red] could not load suite {sp}: {exc}")
+            sys.exit(1)
+
+    # --- Extract traces from results JSON ---
+    traces = []
+    if results_json:
+        try:
+            raw = Path(results_json).read_text(encoding="utf-8")
+            data = json_module.loads(raw)
+        except Exception as exc:
+            console.print(f"[red]error:[/red] could not read {results_json}: {exc}")
+            sys.exit(1)
+
+        if isinstance(data, dict) and "cases" in data:
+            # Full mcptest run output produced by `mcptest run --json`
+            for case_data in data.get("cases", []):
+                trace_data = case_data.get("trace", {})
+                traces.append(Trace.from_dict(trace_data))
+        else:
+            # Assume single trace JSON (from `mcptest record` / `Trace.save()`)
+            try:
+                traces.append(Trace.from_dict(data))
+            except Exception as exc:
+                console.print(f"[red]error:[/red] could not parse trace: {exc}")
+                sys.exit(1)
+
+    report = analyze_coverage(fixtures, traces, test_cases=test_cases or None)
+
+    if json_output:
+        click.echo(json_module.dumps(report.to_dict(), indent=2, default=str))
+    else:
+        _render_coverage(console, report)
+
+    if threshold > 0.0 and report.overall_score < threshold:
+        if not json_output:
+            console.print(
+                f"[red]✗[/red] coverage {report.overall_score:.1%}"
+                f" is below threshold {threshold:.1%}"
+            )
+        sys.exit(1)
+
+
+def _render_coverage(console: Console, report: Any) -> None:
+    """Render a CoverageReport to the Rich console."""
+    from rich.table import Table as _Table
+
+    # Tool / response table
+    tool_table = _Table(title="Fixture Coverage", show_lines=False)
+    tool_table.add_column("Tool")
+    tool_table.add_column("Calls", justify="right")
+    tool_table.add_column("Responses", justify="right")
+    tool_table.add_column("Hit", justify="right")
+    tool_table.add_column("Score", justify="right")
+
+    for t in report.tool_details:
+        score = t.responses_hit / t.responses_total if t.responses_total else 1.0
+        if score >= 0.8:
+            score_str = f"[green]{score:.0%}[/green]"
+        elif score >= 0.5:
+            score_str = f"[yellow]{score:.0%}[/yellow]"
+        else:
+            score_str = f"[red]{score:.0%}[/red]"
+
+        call_indicator = "[green]✓[/green]" if t.call_count > 0 else "[red]✗[/red]"
+        tool_table.add_row(
+            t.name,
+            f"{call_indicator} {t.call_count}",
+            str(t.responses_total),
+            str(t.responses_hit),
+            score_str,
+        )
+    console.print(tool_table)
+
+    # Error table
+    if report.error_details:
+        err_table = _Table(title="Error Coverage", show_lines=False)
+        err_table.add_column("Error")
+        err_table.add_column("Tool Scope")
+        err_table.add_column("Injected", justify="center")
+        err_table.add_column("Count", justify="right")
+        for e in report.error_details:
+            inj = "[green]✓[/green]" if e.injected else "[red]✗[/red]"
+            err_table.add_row(
+                e.name,
+                e.tool or "[dim]any[/dim]",
+                inj,
+                str(e.injection_count),
+            )
+        console.print(err_table)
+
+    # Overall score
+    score = report.overall_score
+    color = "green" if score >= 0.8 else ("yellow" if score >= 0.5 else "red")
+    console.print(f"\nOverall coverage score: [{color}]{score:.1%}[/{color}]")
+
+    # Suggestions
+    if report.uncovered_summary:
+        console.print("\n[bold]Suggestions:[/bold]")
+        for s in report.uncovered_summary:
+            console.print(f"  [dim]•[/dim] {s}")
