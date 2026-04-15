@@ -18,6 +18,7 @@ from mcptest.assertions import (
     parse_assertions,
 )
 from mcptest.cli.scaffold import ScaffoldError, scaffold_project
+from mcptest.diff import BaselineStore, diff_traces
 from mcptest.fixtures.loader import FixtureLoadError, load_fixture
 from mcptest.runner import Runner, RunnerError, SubprocessAdapter, Trace
 from mcptest.testspec import (
@@ -372,3 +373,146 @@ def record_command(
         f"[green]✓[/green] recorded trace to [bold]{output_path}[/bold] "
         f"({trace.total_tool_calls} tool call(s), exit={trace.exit_code})"
     )
+
+
+# ---------------------------------------------------------------------------
+# snapshot / diff — trajectory regression gating
+# ---------------------------------------------------------------------------
+
+
+def _run_all_cases(path: str) -> list[tuple[str, str, Trace]]:
+    """Run every test case under `path` and return `(suite, case, trace)` triples.
+
+    Assertion failures are *not* treated as errors here — snapshot/diff are
+    interested in the raw trajectory, not in whether the run already passes
+    its assertions.
+    """
+    files = discover_test_files(path)
+    out: list[tuple[str, str, Trace]] = []
+    for f in files:
+        try:
+            suite = load_test_suite(f)
+        except TestSuiteLoadError:
+            continue
+        base_dir = f.parent
+        fixture_paths = suite.resolve_fixtures(base_dir)
+        try:
+            adapter = suite.agent.build_adapter(base_dir)
+            runner = Runner(fixtures=fixture_paths, agent=adapter)
+        except (FixtureLoadError, RunnerError, ValueError):
+            continue
+        for case in suite.cases:
+            trace = runner.run(case.input)
+            out.append((suite.name, case.name, trace))
+    return out
+
+
+@click.command(help="Run tests under PATH and save each trace as a baseline.")
+@click.argument(
+    "path",
+    default="tests",
+    type=click.Path(exists=False, resolve_path=True),
+)
+@click.option(
+    "--baseline-dir",
+    default=".mcptest/baselines",
+    type=click.Path(file_okay=False),
+    help="Where to write baseline files.",
+)
+@click.option(
+    "--update",
+    is_flag=True,
+    help="Overwrite existing baselines (otherwise existing baselines are kept).",
+)
+def snapshot_command(path: str, baseline_dir: str, update: bool) -> None:
+    console = Console()
+    store = BaselineStore(baseline_dir)
+    store.ensure()
+
+    cases = _run_all_cases(path)
+    if not cases:
+        console.print(f"[yellow]no test files found under[/yellow] {path}")
+        return
+
+    saved = 0
+    skipped = 0
+    for suite_name, case_name, trace in cases:
+        if store.exists(suite_name, case_name) and not update:
+            console.print(
+                f"[dim]- skipped {suite_name}::{case_name}[/dim] (use --update to overwrite)"
+            )
+            skipped += 1
+            continue
+        store.save(suite_name, case_name, trace)
+        console.print(
+            f"[green]✓[/green] saved baseline for {suite_name}::{case_name} "
+            f"({trace.total_tool_calls} tool call(s))"
+        )
+        saved += 1
+
+    console.print(f"\n[bold]{saved} saved[/bold], {skipped} skipped")
+
+
+@click.command(help="Run tests under PATH and diff each trace against its baseline.")
+@click.argument(
+    "path",
+    default="tests",
+    type=click.Path(exists=False, resolve_path=True),
+)
+@click.option(
+    "--baseline-dir",
+    default=".mcptest/baselines",
+    type=click.Path(file_okay=False),
+    help="Directory containing baseline trace files.",
+)
+@click.option(
+    "--latency-threshold-pct",
+    default=50.0,
+    type=float,
+    help="Report latency regressions above this percentage.",
+)
+@click.option("--ci", is_flag=True, help="Exit non-zero if any regression is found.")
+def diff_command(
+    path: str,
+    baseline_dir: str,
+    latency_threshold_pct: float,
+    ci: bool,
+) -> None:
+    console = Console()
+    store = BaselineStore(baseline_dir)
+
+    cases = _run_all_cases(path)
+    if not cases:
+        console.print(f"[yellow]no test files found under[/yellow] {path}")
+        return
+
+    total_regressions = 0
+    missing_baselines = 0
+
+    for suite_name, case_name, trace in cases:
+        baseline = store.load(suite_name, case_name)
+        header = f"{suite_name}::{case_name}"
+        if baseline is None:
+            console.print(f"[yellow]? {header}[/yellow] no baseline on disk")
+            missing_baselines += 1
+            continue
+
+        diff = diff_traces(
+            baseline, trace, latency_threshold_pct=latency_threshold_pct
+        )
+        if not diff.has_regressions:
+            console.print(f"[green]✓ {header}[/green] no regressions")
+            continue
+
+        total_regressions += len(diff.regressions)
+        console.print(f"[red]× {header}[/red] {len(diff.regressions)} regression(s)")
+        for r in diff.regressions:
+            console.print(f"    [red]{r.kind}[/red]: {r.message}")
+
+    console.print(
+        f"\n[bold]{total_regressions} regression(s)[/bold] across {len(cases)} case(s)"
+        + (f", {missing_baselines} missing baseline(s)" if missing_baselines else "")
+    )
+
+    if ci and (total_regressions or missing_baselines):
+        sys.exit(1)
