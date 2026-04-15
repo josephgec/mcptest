@@ -20,6 +20,7 @@ from mcptest.assertions import (
 from mcptest.cli.scaffold import ScaffoldError, scaffold_project
 from mcptest.diff import BaselineStore, diff_traces
 from mcptest.fixtures.loader import FixtureLoadError, load_fixture
+from mcptest.registry import InstallError, install_pack, list_packs, PACKS
 from mcptest.runner import Runner, RunnerError, SubprocessAdapter, Trace
 from mcptest.testspec import (
     TestCase,
@@ -516,3 +517,43 @@ def diff_command(
 
     if ci and (total_regressions or missing_baselines):
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# install-pack / list-packs — the registry of pre-built test packs
+# ---------------------------------------------------------------------------
+
+
+@click.command(help="List the pre-built test packs that ship with mcptest.")
+def list_packs_command() -> None:
+    console = Console()
+    for name in list_packs():
+        pack = PACKS[name]
+        console.print(f"[bold]{name}[/bold] — {pack.description}")
+
+
+@click.command(help="Install a pre-built test pack into PATH (default: current dir).")
+@click.argument("name")
+@click.argument(
+    "path",
+    default=".",
+    type=click.Path(file_okay=False, resolve_path=True),
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Overwrite existing files if they conflict with the pack.",
+)
+def install_pack_command(name: str, path: str, force: bool) -> None:
+    console = Console()
+    try:
+        written = install_pack(name, Path(path), force=force)
+    except InstallError as exc:
+        console.print(f"[red]error:[/red] {exc}")
+        sys.exit(1)
+
+    console.print(
+        f"[green]✓[/green] installed pack [bold]{name}[/bold] into {path}"
+    )
+    for rel in written:
+        console.print(f"  [dim]created[/dim] {rel}")

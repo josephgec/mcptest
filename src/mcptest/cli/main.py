@@ -8,6 +8,8 @@ from mcptest import __version__
 from mcptest.cli.commands import (
     diff_command,
     init_command,
+    install_pack_command,
+    list_packs_command,
     record_command,
     run_command,
     snapshot_command,
@@ -36,6 +38,8 @@ main.add_command(snapshot_command, name="snapshot")
 main.add_command(diff_command, name="diff")
 main.add_command(github_comment_command, name="github-comment")
 main.add_command(badge_command, name="badge")
+main.add_command(install_pack_command, name="install-pack")
+main.add_command(list_packs_command, name="list-packs")
 
 
 if __name__ == "__main__":  # pragma: no cover
