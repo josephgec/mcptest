@@ -42,12 +42,8 @@ cloud = [
 [project.scripts]
 mcptest = "mcptest.cli:main"
 
-# Note: the pytest11 entry point is wired up in Session 8 once the plugin
-# actually does something. Registering an empty plugin here makes coverage
-# miss top-level imports because pytest loads the entry-point module before
-# pytest-cov starts instrumenting.
-# [project.entry-points."pytest11"]
-# mcptest = "mcptest.pytest_plugin"
+[project.entry-points."pytest11"]
+mcptest = "mcptest.pytest_plugin"
 
 [project.urls]
 Homepage = "https://github.com/josephgec/mcptest"
@@ -80,8 +76,13 @@ source = ["src/mcptest"]
 branch = true
 omit = [
     "src/mcptest/cloud/*",
-    # Stub module re-added with real coverage in Session 8.
+    # These two files are loaded by pytest's pytest11 entry point BEFORE
+    # pytest-cov starts instrumenting, which makes coverage.py skip their
+    # statements entirely (see the "module-not-measured" warning). Their
+    # behavior is covered end-to-end by tests/test_pytest_plugin.py via a
+    # nested pytester session.
     "src/mcptest/pytest_plugin.py",
+    "src/mcptest/__init__.py",
 ]
 
 [tool.coverage.report]
@@ -93,4 +94,9 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
     "\\.\\.\\.",
+    # Lazy re-export machinery in mcptest/__init__.py — runs before
+    # pytest-cov starts instrumenting, same reason as the pytest_plugin.py
+    # omit above.
+    "_LAZY_REEXPORTS = ",
+    "def __getattr__\\(",
 ]
