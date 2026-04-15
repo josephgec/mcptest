@@ -524,6 +524,101 @@ def diff_command(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# metrics — compute quantitative quality scores from a saved trace
+# ---------------------------------------------------------------------------
+
+
+@click.command(help="Compute quantitative quality metrics from a saved trace JSON file.")
+@click.argument(
+    "trace_json",
+    type=click.Path(exists=True, dir_okay=False),
+)
+@click.option(
+    "--fixture",
+    "fixture_paths",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Fixture YAML for schema_compliance and tool_coverage metrics (repeatable).",
+)
+@click.option(
+    "--reference",
+    "reference_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Baseline trace JSON for trajectory_similarity metric.",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Emit machine-readable JSON on stdout instead of a human-friendly table.",
+)
+def metrics_command(
+    trace_json: str,
+    fixture_paths: tuple[str, ...],
+    reference_path: str | None,
+    json_output: bool,
+) -> None:
+    from mcptest.metrics import compute_all
+
+    console = Console(stderr=json_output)
+
+    try:
+        trace = Trace.load(trace_json)
+    except Exception as exc:
+        console.print(f"[red]error:[/red] could not load trace: {exc}")
+        sys.exit(1)
+
+    fixtures = []
+    for fp in fixture_paths:
+        try:
+            fixtures.append(load_fixture(fp))
+        except FixtureLoadError as exc:
+            console.print(f"[red]error:[/red] could not load fixture {fp}: {exc}")
+            sys.exit(1)
+
+    reference = None
+    if reference_path is not None:
+        try:
+            reference = Trace.load(reference_path)
+        except Exception as exc:
+            console.print(f"[red]error:[/red] could not load reference trace: {exc}")
+            sys.exit(1)
+
+    results = compute_all(trace, reference=reference, fixtures=fixtures or None)
+
+    if json_output:
+        click.echo(json_module.dumps([r.to_dict() for r in results], indent=2, default=str))
+        return
+
+    table = Table(title="mcptest metrics", show_lines=False)
+    table.add_column("Metric")
+    table.add_column("Score", justify="right")
+    table.add_column("Label")
+    table.add_column("Details")
+
+    for r in results:
+        if r.score >= 0.8:
+            score_str = f"[green]{r.score:.3f}[/green]"
+        elif r.score >= 0.5:
+            score_str = f"[yellow]{r.score:.3f}[/yellow]"
+        else:
+            score_str = f"[red]{r.score:.3f}[/red]"
+
+        details_str = ", ".join(
+            f"{k}: {v}"
+            for k, v in r.details.items()
+            if k != "note" or len(r.details) == 1
+        )
+        if "note" in r.details and len(r.details) > 1:
+            details_str = r.details["note"] + (f", {details_str}" if details_str else "")
+
+        table.add_row(r.name, score_str, r.label, details_str or "—")
+
+    console.print(table)
+
+
 @click.command(help="List the pre-built test packs that ship with mcptest.")
 def list_packs_command() -> None:
     console = Console()
