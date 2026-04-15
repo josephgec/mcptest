@@ -1,0 +1,223 @@
+{% extends "base.html" %}
+{% block title %}Run #{{ run.id }} — mcptest{% endblock %}
+{% block content %}
+
+<!-- Header -->
+<div style="margin-bottom:24px;">
+  <div style="margin-bottom:8px;">
+    <a href="/dashboard/runs" style="font-size:12px; color:#6b7280;">&#8592; All Runs</a>
+  </div>
+  <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+    <h1 style="font-size:22px; font-weight:700; color:#f9fafb;">Run #{{ run.id }}</h1>
+    {% if run.passed %}
+      <span class="badge-pass" style="font-size:14px; padding:4px 12px;">&#10003; Passed</span>
+    {% else %}
+      <span class="badge-fail" style="font-size:14px; padding:4px 12px;">&#10007; Failed</span>
+    {% endif %}
+    {% if run.is_baseline %}
+      <span class="badge-baseline" style="font-size:14px; padding:4px 12px;">&#9670; Baseline</span>
+    {% endif %}
+  </div>
+  {% if run.suite %}
+  <p style="font-size:14px; color:#9ca3af; margin-top:6px;">
+    {{ run.suite }}{% if run.case %} / {{ run.case }}{% endif %}
+  </p>
+  {% endif %}
+</div>
+
+<!-- Info grid -->
+<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:28px;">
+  <div class="card" style="padding:16px;">
+    <div class="stat-label">Duration</div>
+    <div style="font-size:20px; font-weight:600; color:#f9fafb;">{{ run.duration_s | fmt_duration }}</div>
+  </div>
+  <div class="card" style="padding:16px;">
+    <div class="stat-label">Tool Calls</div>
+    <div style="font-size:20px; font-weight:600; color:#f9fafb;">{{ run.total_tool_calls }}</div>
+  </div>
+  <div class="card" style="padding:16px;">
+    <div class="stat-label">Exit Code</div>
+    <div style="font-size:20px; font-weight:600; color:{% if run.exit_code == 0 %}#4ade80{% else %}#f87171{% endif %};">{{ run.exit_code }}</div>
+  </div>
+  <div class="card" style="padding:16px;">
+    <div class="stat-label">Created</div>
+    <div style="font-size:14px; font-weight:600; color:#f9fafb;">{{ run.created_at | time_ago }}</div>
+    <div style="font-size:11px; color:#4b5563; margin-top:2px;">{{ run.created_at.isoformat() if run.created_at else '—' }}</div>
+  </div>
+</div>
+
+<!-- Labels row -->
+<div class="card" style="padding:16px 20px; margin-bottom:24px; display:flex; gap:32px; flex-wrap:wrap;">
+  <div>
+    <div class="stat-label">Branch</div>
+    <div style="font-size:13px; color:#e5e7eb;">{{ run.branch or '—' }}</div>
+  </div>
+  <div>
+    <div class="stat-label">Git SHA</div>
+    <div style="font-size:13px; color:#e5e7eb; font-family:monospace;">{{ run.git_sha or '—' }}</div>
+  </div>
+  <div>
+    <div class="stat-label">Git Ref</div>
+    <div style="font-size:13px; color:#e5e7eb; font-family:monospace;">{{ run.git_ref or '—' }}</div>
+  </div>
+  <div>
+    <div class="stat-label">Environment</div>
+    <div style="font-size:13px; color:#e5e7eb;">{{ run.environment or '—' }}</div>
+  </div>
+  <div>
+    <div class="stat-label">Trace ID</div>
+    <div style="font-size:12px; color:#9ca3af; font-family:monospace;">{{ run.trace_id }}</div>
+  </div>
+</div>
+
+<!-- Action buttons -->
+<div style="display:flex; gap:10px; margin-bottom:28px; flex-wrap:wrap;">
+  {% if not run.is_baseline %}
+  <button class="btn btn-primary"
+    hx-post="/runs/{{ run.id }}/promote"
+    hx-headers='{"Content-Type": "application/json"}'
+    hx-confirm="Promote run #{{ run.id }} as baseline for suite '{{ run.suite }}'?"
+    hx-on::after-request="window.location.reload()">
+    &#9670; Promote as Baseline
+  </button>
+  {% else %}
+  <button class="btn btn-ghost"
+    hx-delete="/runs/{{ run.id }}/promote"
+    hx-headers='{"Content-Type": "application/json"}'
+    hx-confirm="Remove baseline flag from run #{{ run.id }}?"
+    hx-on::after-request="window.location.reload()">
+    Demote Baseline
+  </button>
+  {% endif %}
+  <a href="/dashboard/trends?suite={{ run.suite or '' }}" class="btn btn-ghost">View Trends</a>
+</div>
+
+<!-- Metric scores -->
+{% if metric_items %}
+<div class="card" style="padding:0; overflow:hidden; margin-bottom:24px;">
+  <div style="padding:16px 20px; border-bottom:1px solid #1f2937;">
+    <h2 style="font-size:14px; font-weight:600; color:#f9fafb;">Metric Scores</h2>
+  </div>
+  <div style="padding:20px;">
+    <canvas id="metricsChart" style="max-height:200px;"></canvas>
+  </div>
+  <div style="padding:0 20px 16px;">
+    {% for name, score in metric_items %}
+    <div style="display:flex; align-items:center; gap:12px; margin-bottom:10px;">
+      <div style="width:140px; font-size:12px; color:#9ca3af; flex-shrink:0;">{{ name }}</div>
+      <div style="flex:1; height:8px; background:#1f2937; border-radius:4px; overflow:hidden;">
+        <div style="height:100%; width:{{ (score * 100) | int }}%; background:{% if score >= 0.8 %}#16a34a{% elif score >= 0.5 %}#d97706{% else %}#dc2626{% endif %}; border-radius:4px;"></div>
+      </div>
+      <div style="width:40px; text-align:right; font-size:12px; font-weight:600; color:#e5e7eb;">{{ "%.2f" | format(score) }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Tool calls -->
+{% if tool_calls %}
+<div class="card" style="padding:0; overflow:hidden; margin-bottom:24px;">
+  <div style="padding:16px 20px; border-bottom:1px solid #1f2937;">
+    <h2 style="font-size:14px; font-weight:600; color:#f9fafb;">Tool Calls <span style="color:#4b5563; font-weight:400;">({{ tool_calls | length }})</span></h2>
+  </div>
+  <div style="padding:12px 20px;">
+    {% for call in tool_calls %}
+    <details style="margin-bottom:8px; background:#1f2937; border-radius:8px; padding:10px 14px;">
+      <summary style="font-size:13px; font-weight:500; color:#e5e7eb; list-style:none; display:flex; align-items:center; gap:8px;">
+        <span style="color:#6b7280; font-size:11px; font-family:monospace; min-width:24px;">#{{ loop.index }}</span>
+        <span style="color:#60a5fa;">{{ call.tool or call.get('name', '?') }}</span>
+        <span style="margin-left:auto; font-size:11px; color:#4b5563;">&#9660;</span>
+      </summary>
+      <div style="margin-top:10px; padding-top:10px; border-top:1px solid #374151;">
+        {% if call.arguments %}
+        <div style="margin-bottom:8px;">
+          <div style="font-size:11px; color:#6b7280; margin-bottom:4px;">Arguments</div>
+          <pre style="font-size:11px; color:#d1d5db; white-space:pre-wrap; word-break:break-all; background:#111827; padding:8px 12px; border-radius:6px; overflow-x:auto;">{{ call.arguments | tojson(indent=2) }}</pre>
+        </div>
+        {% endif %}
+        {% if call.result is defined %}
+        <div>
+          <div style="font-size:11px; color:#6b7280; margin-bottom:4px;">Result</div>
+          <pre style="font-size:11px; color:#d1d5db; white-space:pre-wrap; word-break:break-all; background:#111827; padding:8px 12px; border-radius:6px; overflow-x:auto;">{{ call.result | tojson(indent=2) if call.result is mapping else call.result }}</pre>
+        </div>
+        {% endif %}
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Input / Output -->
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:24px;">
+  <details class="card" style="overflow:hidden;">
+    <summary style="padding:16px 20px; border-bottom:1px solid #1f2937; font-size:14px; font-weight:600; color:#f9fafb; display:flex; justify-content:space-between;">
+      Input <span style="font-size:12px; font-weight:400; color:#6b7280;">click to expand</span>
+    </summary>
+    <div style="padding:16px 20px;">
+      <pre style="font-size:12px; color:#d1d5db; white-space:pre-wrap; word-break:break-all; max-height:300px; overflow-y:auto;">{{ run.input or '(empty)' }}</pre>
+    </div>
+  </details>
+  <details class="card" style="overflow:hidden;">
+    <summary style="padding:16px 20px; border-bottom:1px solid #1f2937; font-size:14px; font-weight:600; color:#f9fafb; display:flex; justify-content:space-between;">
+      Output <span style="font-size:12px; font-weight:400; color:#6b7280;">click to expand</span>
+    </summary>
+    <div style="padding:16px 20px;">
+      <pre style="font-size:12px; color:#d1d5db; white-space:pre-wrap; word-break:break-all; max-height:300px; overflow-y:auto;">{{ run.output or '(empty)' }}</pre>
+    </div>
+  </details>
+</div>
+
+{% if run.agent_error %}
+<div class="card" style="padding:16px 20px; border-color:#7f1d1d; background:#450a0a; margin-bottom:24px;">
+  <div style="font-size:12px; color:#fca5a5; font-weight:600; margin-bottom:6px;">Agent Error</div>
+  <pre style="font-size:12px; color:#fca5a5; white-space:pre-wrap;">{{ run.agent_error }}</pre>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+{% if metric_items %}
+<script>
+(function() {
+  var ctx = document.getElementById('metricsChart');
+  if (!ctx) return;
+  var scores = {{ metric_scores_json | safe }};
+  var labels = Object.keys(scores);
+  var values = Object.values(scores);
+  var colors = values.map(function(v) {
+    return v >= 0.8 ? '#16a34a' : v >= 0.5 ? '#d97706' : '#dc2626';
+  });
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        data: values,
+        backgroundColor: colors,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      indexAxis: 'y',
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: {
+          min: 0, max: 1,
+          grid: { color: '#1f2937' },
+          ticks: { color: '#6b7280', font: { size: 11 } }
+        },
+        y: {
+          grid: { display: false },
+          ticks: { color: '#9ca3af', font: { size: 11 } }
+        }
+      }
+    }
+  });
+})();
+</script>
+{% endif %}
+{% endblock %}

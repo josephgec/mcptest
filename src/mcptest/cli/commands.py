@@ -2711,3 +2711,72 @@ def eval_command(
 
     if ci and (not summary.passed_cases == summary.total_cases or summary.mean_composite < fail_under):
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# dashboard — launch the cloud web UI
+# ---------------------------------------------------------------------------
+
+
+@click.command(
+    help=(
+        "Launch the mcptest cloud dashboard web UI.\n\n"
+        "Starts a local web server serving the dashboard at "
+        "http://HOST:PORT/dashboard/.  Opens the browser automatically "
+        "unless --no-browser is given.\n\n"
+        "Requires the 'cloud' extras: pip install 'mcptest[cloud]'"
+    )
+)
+@click.option("--host", default="127.0.0.1", show_default=True, help="Host to bind to.")
+@click.option("--port", default=8100, show_default=True, type=int, help="Port to listen on.")
+@click.option("--no-browser", is_flag=True, default=False, help="Do not open the browser automatically.")
+@click.option(
+    "--db",
+    default=None,
+    metavar="PATH",
+    help="Path to a SQLite database file. Defaults to the MCPTEST_DATABASE_URL env var or ./mcptest_cloud.db.",
+)
+def dashboard_command(host: str, port: int, no_browser: bool, db: str | None) -> None:
+    try:
+        import uvicorn  # noqa: F401
+    except ImportError:  # pragma: no cover
+        raise click.ClickException(
+            "uvicorn is required to run the dashboard.\n"
+            "Install with: pip install 'mcptest[cloud]'"
+        )
+
+    try:
+        from mcptest.cloud import Settings, create_app
+    except ImportError:  # pragma: no cover
+        raise click.ClickException(
+            "FastAPI / SQLAlchemy are required to run the dashboard.\n"
+            "Install with: pip install 'mcptest[cloud]'"
+        )
+
+    if db:
+        settings = Settings(database_url=f"sqlite:///{db}")
+    else:
+        settings = Settings.from_env()
+
+    app = create_app(settings)
+
+    url = f"http://{host}:{port}/dashboard/"
+
+    if not no_browser:
+        import threading
+        import time
+        import webbrowser
+
+        def _open() -> None:
+            time.sleep(1.2)
+            webbrowser.open(url)
+
+        threading.Thread(target=_open, daemon=True).start()
+
+    console = Console()
+    console.print(f"[bold blue]mcptest dashboard[/bold blue] running at [link={url}]{url}[/link]")
+    console.print("[dim]Press Ctrl+C to stop[/dim]")
+
+    import uvicorn
+
+    uvicorn.run(app, host=host, port=port, log_level="warning")

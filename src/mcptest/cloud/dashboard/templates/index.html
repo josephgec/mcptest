@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — mcptest{% endblock %}
+{% block content %}
+
+<div style="margin-bottom:24px;">
+  <h1 style="font-size:22px; font-weight:700; color:#f9fafb;">Dashboard</h1>
+  <p style="font-size:13px; color:#6b7280; margin-top:4px;">Overview of all mcptest runs stored in this cloud backend.</p>
+</div>
+
+<!-- Stats row -->
+<div style="display:grid; grid-template-columns:repeat(5,1fr); gap:16px; margin-bottom:32px;">
+  <div class="stat-card">
+    <div class="stat-label">Total Runs</div>
+    <div class="stat-value">{{ total }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Pass Rate</div>
+    <div class="stat-value" style="color:{% if pass_rate >= 80 %}#4ade80{% elif pass_rate >= 50 %}#fbbf24{% else %}#f87171{% endif %};">{{ pass_rate }}%</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Avg Duration</div>
+    <div class="stat-value" style="font-size:22px;">{{ avg_duration | fmt_duration }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Tool Calls</div>
+    <div class="stat-value">{{ total_tool_calls }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-label">Baselines</div>
+    <div class="stat-value">{{ baseline_count }}</div>
+  </div>
+</div>
+
+<div style="display:grid; grid-template-columns:2fr 1fr; gap:24px;">
+
+  <!-- Recent runs -->
+  <div class="card" style="padding:0; overflow:hidden;">
+    <div style="padding:16px 20px; border-bottom:1px solid #1f2937; display:flex; justify-content:space-between; align-items:center;">
+      <h2 style="font-size:14px; font-weight:600; color:#f9fafb;">Recent Runs</h2>
+      <a href="/dashboard/runs" style="font-size:12px; color:#6b7280;">View all &#8594;</a>
+    </div>
+    {% if recent_runs %}
+    <table>
+      <thead>
+        <tr>
+          <th>Suite / Case</th>
+          <th>Status</th>
+          <th>Duration</th>
+          <th>Branch</th>
+          <th>When</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for run in recent_runs %}
+        <tr>
+          <td>
+            <a href="/dashboard/runs/{{ run.id }}">
+              {{ run.suite or '—' }}{% if run.case %} / <span style="color:#9ca3af;">{{ run.case }}</span>{% endif %}
+            </a>
+          </td>
+          <td>
+            {% if run.passed %}
+              <span class="badge-pass">&#10003; pass</span>
+            {% else %}
+              <span class="badge-fail">&#10007; fail</span>
+            {% endif %}
+            {% if run.is_baseline %}<span class="badge-baseline" style="margin-left:4px;">baseline</span>{% endif %}
+          </td>
+          <td style="color:#9ca3af;">{{ run.duration_s | fmt_duration }}</td>
+          <td style="color:#9ca3af; font-size:12px;">{{ run.branch or '—' }}</td>
+          <td style="color:#6b7280; font-size:12px;">{{ run.created_at | time_ago }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div style="padding:40px; text-align:center; color:#4b5563;">
+      <p style="font-size:14px;">No runs yet.</p>
+      <p style="font-size:12px; margin-top:8px;">Push a trace with <code style="background:#1f2937; padding:2px 6px; border-radius:4px;">mcptest cloud-push</code> to get started.</p>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Suite breakdown -->
+  <div class="card" style="padding:0; overflow:hidden;">
+    <div style="padding:16px 20px; border-bottom:1px solid #1f2937;">
+      <h2 style="font-size:14px; font-weight:600; color:#f9fafb;">Suite Breakdown</h2>
+    </div>
+    {% if suite_stats %}
+    <div style="padding:8px 0;">
+      {% for suite, counts in suite_stats.items() %}
+      {% set total_suite = counts.passed + counts.failed %}
+      {% set pct = (counts.passed / total_suite * 100) | round(0) | int if total_suite > 0 else 0 %}
+      <div style="padding:12px 20px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <span style="font-size:13px; color:#e5e7eb; font-weight:500;">{{ suite }}</span>
+          <span style="font-size:12px; color:#6b7280;">{{ counts.passed }}/{{ total_suite }}</span>
+        </div>
+        <div style="height:6px; background:#1f2937; border-radius:3px; overflow:hidden;">
+          <div style="height:100%; width:{{ pct }}%; background:{% if pct >= 80 %}#16a34a{% elif pct >= 50 %}#d97706{% else %}#dc2626{% endif %}; border-radius:3px; transition:width 0.3s;"></div>
+        </div>
+        <div style="font-size:11px; color:#4b5563; margin-top:4px;">{{ pct }}% pass rate</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div style="padding:40px; text-align:center; color:#4b5563; font-size:13px;">No suites yet.</div>
+    {% endif %}
+  </div>
+
+</div>
+{% endblock %}

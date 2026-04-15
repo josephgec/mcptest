@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{% block title %}mcptest dashboard{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'media',
+      theme: {
+        extend: {
+          colors: {
+            surface: '#1e2130',
+            muted: '#2a2d3e',
+          }
+        }
+      }
+    }
+  </script>
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4" defer></script>
+  <style>
+    :root { color-scheme: dark; }
+    body { background: #0d0f1a; color: #e2e8f0; }
+    .sidebar { background: #111827; border-right: 1px solid #1f2937; }
+    .nav-link {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px; border-radius: 8px;
+      color: #9ca3af; text-decoration: none; font-size: 14px;
+      margin-bottom: 2px; transition: background 0.15s, color 0.15s;
+    }
+    .nav-link:hover { background: #1f2937; color: #f9fafb; }
+    .nav-link.active { background: #1f2937; color: #f9fafb; font-weight: 500; }
+    .nav-link .dot { width: 6px; height: 6px; border-radius: 50%; background: #4b5563; flex-shrink: 0; }
+    .nav-link.active .dot { background: #3b82f6; }
+    .card { background: #111827; border: 1px solid #1f2937; border-radius: 12px; }
+    .badge-pass { background: #052e16; color: #4ade80; border: 1px solid #166534; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 500; }
+    .badge-fail { background: #450a0a; color: #f87171; border: 1px solid #7f1d1d; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 500; }
+    .badge-baseline { background: #1e1b4b; color: #a5b4fc; border: 1px solid #3730a3; border-radius: 6px; padding: 2px 8px; font-size: 12px; font-weight: 500; }
+    .stat-card { background: #111827; border: 1px solid #1f2937; border-radius: 12px; padding: 20px; }
+    .stat-label { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+    .stat-value { font-size: 28px; font-weight: 700; color: #f9fafb; }
+    .stat-sub { font-size: 12px; color: #6b7280; margin-top: 4px; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; padding: 10px 16px; border-bottom: 1px solid #1f2937; }
+    td { padding: 12px 16px; border-bottom: 1px solid #1f2937; font-size: 13px; color: #d1d5db; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #151b2b; }
+    .form-select, .form-input {
+      background: #1f2937; border: 1px solid #374151; color: #e5e7eb;
+      border-radius: 8px; padding: 7px 12px; font-size: 13px;
+    }
+    .form-select:focus, .form-input:focus { outline: 1px solid #3b82f6; border-color: #3b82f6; }
+    .btn { border-radius: 8px; padding: 7px 16px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: opacity 0.15s; }
+    .btn:hover { opacity: 0.85; }
+    .btn-primary { background: #3b82f6; color: #fff; }
+    .btn-danger { background: #dc2626; color: #fff; }
+    .btn-ghost { background: #1f2937; color: #e5e7eb; border: 1px solid #374151; }
+    a { color: #60a5fa; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .section-title { font-size: 13px; font-weight: 600; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
+    details summary { cursor: pointer; user-select: none; }
+    details summary::-webkit-details-marker { display: none; }
+  </style>
+</head>
+<body style="display:flex; min-height:100vh;">
+
+  <!-- Sidebar -->
+  <nav class="sidebar" style="width:220px; min-height:100vh; position:fixed; top:0; left:0; bottom:0; display:flex; flex-direction:column; overflow-y:auto; z-index:10;">
+    <div style="padding:20px 16px; border-bottom:1px solid #1f2937;">
+      <a href="/dashboard/" style="color:#f9fafb; font-weight:700; font-size:16px; text-decoration:none; display:flex; align-items:center; gap:8px;">
+        <span style="color:#3b82f6; font-size:20px;">&#9672;</span> mcptest
+      </a>
+      <p style="font-size:11px; color:#4b5563; margin-top:4px; margin-left:28px;">cloud dashboard</p>
+    </div>
+    <div style="padding:12px 8px; flex:1;">
+      <p style="font-size:10px; color:#4b5563; text-transform:uppercase; letter-spacing:0.08em; padding:0 12px; margin-bottom:6px;">Navigate</p>
+      <a href="/dashboard/" class="nav-link {% if active_page == 'home' %}active{% endif %}">
+        <span class="dot"></span> Dashboard
+      </a>
+      <a href="/dashboard/runs" class="nav-link {% if active_page == 'runs' %}active{% endif %}">
+        <span class="dot"></span> Runs
+      </a>
+      <a href="/dashboard/trends" class="nav-link {% if active_page == 'trends' %}active{% endif %}">
+        <span class="dot"></span> Trends
+      </a>
+      <a href="/dashboard/baselines" class="nav-link {% if active_page == 'baselines' %}active{% endif %}">
+        <span class="dot"></span> Baselines
+      </a>
+    </div>
+    <div style="padding:12px 16px; border-top:1px solid #1f2937;">
+      <a href="/docs" style="font-size:12px; color:#4b5563;">API Docs &#8599;</a>
+    </div>
+  </nav>
+
+  <!-- Main content -->
+  <main style="margin-left:220px; flex:1; padding:32px; min-width:0;">
+    {% block content %}{% endblock %}
+  </main>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>

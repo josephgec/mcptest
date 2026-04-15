@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}Baselines — mcptest{% endblock %}
+{% block content %}
+
+<div style="margin-bottom:24px;">
+  <h1 style="font-size:22px; font-weight:700; color:#f9fafb;">Baselines</h1>
+  <p style="font-size:13px; color:#6b7280; margin-top:4px;">
+    Each suite can have one baseline run. Promote a run to become the regression reference for its suite.
+  </p>
+</div>
+
+{% if baselines %}
+
+<!-- Baselines table -->
+<div class="card" style="overflow:hidden; margin-bottom:32px;">
+  <div style="padding:16px 20px; border-bottom:1px solid #1f2937; display:flex; justify-content:space-between; align-items:center;">
+    <h2 style="font-size:14px; font-weight:600; color:#f9fafb;">Active Baselines <span style="color:#4b5563; font-weight:400;">({{ baselines | length }})</span></h2>
+  </div>
+  <table>
+    <thead>
+      <tr>
+        <th>Suite</th>
+        <th>Case</th>
+        <th>Branch</th>
+        <th>Metrics</th>
+        <th>Created</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in baselines %}
+      <tr id="baseline-row-{{ run.id }}">
+        <td>
+          <a href="/dashboard/runs/{{ run.id }}">{{ run.suite or '—' }}</a>
+          <span class="badge-baseline" style="margin-left:6px;">&#9670;</span>
+        </td>
+        <td style="color:#9ca3af;">{{ run.case or '—' }}</td>
+        <td style="color:#9ca3af; font-size:12px;">{{ run.branch or '—' }}</td>
+        <td>
+          {% if run.metric_scores %}
+            {% for name, score in run.metric_scores.items() %}
+            <span style="font-size:11px; color:#9ca3af; margin-right:8px;">
+              {{ name }}: <span style="color:{% if score >= 0.8 %}#4ade80{% elif score >= 0.5 %}#fbbf24{% else %}#f87171{% endif %}; font-weight:600;">{{ "%.2f" | format(score) }}</span>
+            </span>
+            {% endfor %}
+          {% else %}
+            <span style="font-size:12px; color:#4b5563;">no metrics</span>
+          {% endif %}
+        </td>
+        <td style="color:#6b7280; font-size:12px;">{{ run.created_at | time_ago }}</td>
+        <td>
+          <button class="btn btn-ghost" style="font-size:11px; padding:4px 10px;"
+            hx-delete="/runs/{{ run.id }}/promote"
+            hx-headers='{"Content-Type": "application/json"}'
+            hx-target="#baseline-row-{{ run.id }}"
+            hx-swap="outerHTML"
+            hx-confirm="Remove baseline flag from run #{{ run.id }}?">
+            Demote
+          </button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% else %}
+
+<div class="card" style="padding:60px; text-align:center; margin-bottom:32px;">
+  <p style="font-size:16px; color:#6b7280; font-weight:500;">No baselines set.</p>
+  <p style="font-size:13px; color:#4b5563; margin-top:8px;">
+    Promote a run from the <a href="/dashboard/runs">Runs page</a> or via the API:
+  </p>
+  <pre style="display:inline-block; background:#1f2937; padding:10px 16px; border-radius:8px; font-size:12px; color:#9ca3af; margin-top:12px; text-align:left;">POST /runs/{id}/promote</pre>
+</div>
+
+{% endif %}
+
+<!-- Compare two runs -->
+<div class="card" style="padding:0; overflow:hidden;">
+  <div style="padding:16px 20px; border-bottom:1px solid #1f2937;">
+    <h2 style="font-size:14px; font-weight:600; color:#f9fafb;">Compare Two Runs</h2>
+    <p style="font-size:12px; color:#6b7280; margin-top:4px;">Select a base and head run by ID to see metric deltas.</p>
+  </div>
+  <div style="padding:20px;">
+    <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:16px;">
+      <div>
+        <label style="display:block; font-size:11px; color:#6b7280; margin-bottom:4px;">Base Run ID</label>
+        <input type="number" id="cmp-base" placeholder="e.g. 1" class="form-input" style="width:120px;" min="1"/>
+      </div>
+      <div>
+        <label style="display:block; font-size:11px; color:#6b7280; margin-bottom:4px;">Head Run ID</label>
+        <input type="number" id="cmp-head" placeholder="e.g. 2" class="form-input" style="width:120px;" min="1"/>
+      </div>
+      <button class="btn btn-primary" onclick="runCompare()">Compare</button>
+    </div>
+    <div id="compare-result" style="display:none;"></div>
+    <div id="compare-error" style="display:none; color:#f87171; font-size:13px;"></div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function runCompare() {
+  var baseId = parseInt(document.getElementById('cmp-base').value);
+  var headId = parseInt(document.getElementById('cmp-head').value);
+  var resultEl = document.getElementById('compare-result');
+  var errorEl  = document.getElementById('compare-error');
+
+  resultEl.style.display = 'none';
+  errorEl.style.display  = 'none';
+
+  if (!baseId || !headId) {
+    errorEl.textContent = 'Please enter both base and head run IDs.';
+    errorEl.style.display = 'block';
+    return;
+  }
+
+  fetch('/compare', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ base_id: baseId, head_id: headId })
+  })
+  .then(function(r) {
+    if (!r.ok) { return r.json().then(function(d) { throw new Error(d.detail || r.statusText); }); }
+    return r.json();
+  })
+  .then(function(data) {
+    renderCompare(data);
+  })
+  .catch(function(err) {
+    errorEl.textContent = 'Error: ' + err.message;
+    errorEl.style.display = 'block';
+  });
+}
+
+function renderCompare(data) {
+  var el = document.getElementById('compare-result');
+  var overall = data.overall_passed;
+  var html = '<div style="margin-bottom:12px; display:flex; align-items:center; gap:10px;">' +
+    '<span>Run #' + data.base_id + ' &#8594; Run #' + data.head_id + '</span>' +
+    (overall
+      ? '<span class="badge-pass">&#10003; No regressions</span>'
+      : '<span class="badge-fail">&#10007; ' + data.regression_count + ' regression(s)</span>') +
+    '</div>';
+
+  if (data.deltas && data.deltas.length) {
+    html += '<table><thead><tr><th>Metric</th><th>Base</th><th>Head</th><th>Delta</th><th>Status</th></tr></thead><tbody>';
+    data.deltas.forEach(function(d) {
+      var deltaColor = d.delta > 0 ? '#4ade80' : d.delta < 0 ? '#f87171' : '#9ca3af';
+      var sign = d.delta > 0 ? '&#9650; +' : d.delta < 0 ? '&#9660; ' : '';
+      html += '<tr>' +
+        '<td>' + (d.label || d.name) + '</td>' +
+        '<td style="color:#9ca3af;">' + d.base_score.toFixed(3) + '</td>' +
+        '<td style="color:#9ca3af;">' + d.head_score.toFixed(3) + '</td>' +
+        '<td style="color:' + deltaColor + '; font-weight:600;">' + sign + d.delta.toFixed(3) + '</td>' +
+        '<td>' + (d.regressed ? '<span class="badge-fail">regression</span>' : '<span class="badge-pass">ok</span>') + '</td>' +
+        '</tr>';
+    });
+    html += '</tbody></table>';
+  } else {
+    html += '<p style="font-size:13px; color:#6b7280;">No metrics to compare (both runs have empty metric_scores).</p>';
+  }
+
+  el.innerHTML = html;
+  el.style.display = 'block';
+}
+</script>
+{% endblock %}

@@ -1,0 +1,67 @@
+<div id="runs-table" class="card" style="overflow:hidden;">
+  {% if runs %}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Suite</th>
+        <th>Case</th>
+        <th>Status</th>
+        <th>Duration</th>
+        <th>Branch</th>
+        <th>SHA</th>
+        <th>Created</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in runs %}
+      <tr>
+        <td style="color:#4b5563; font-size:12px;">#{{ run.id }}</td>
+        <td>
+          <a href="/dashboard/runs/{{ run.id }}">{{ run.suite or '—' }}</a>
+        </td>
+        <td style="color:#9ca3af;">{{ run.case or '—' }}</td>
+        <td>
+          {% if run.passed %}
+            <span class="badge-pass">&#10003; pass</span>
+          {% else %}
+            <span class="badge-fail">&#10007; fail</span>
+          {% endif %}
+          {% if run.is_baseline %}<span class="badge-baseline" style="margin-left:4px;">B</span>{% endif %}
+        </td>
+        <td style="color:#9ca3af; font-size:12px;">{{ run.duration_s | fmt_duration }}</td>
+        <td style="color:#9ca3af; font-size:12px;">{{ run.branch or '—' }}</td>
+        <td style="color:#4b5563; font-size:11px; font-family:monospace;">
+          {% if run.git_sha %}{{ run.git_sha[:7] }}{% else %}—{% endif %}
+        </td>
+        <td style="color:#6b7280; font-size:12px;">{{ run.created_at | time_ago }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <!-- Pagination -->
+  <div style="padding:12px 20px; border-top:1px solid #1f2937; display:flex; justify-content:space-between; align-items:center;">
+    <span style="font-size:12px; color:#6b7280;">
+      Showing {{ (page - 1) * per_page + 1 }}–{{ [(page - 1) * per_page + runs | length, total] | min }} of {{ total }}
+    </span>
+    <div style="display:flex; gap:8px;">
+      {% if page > 1 %}
+      <a href="/dashboard/runs?page={{ page - 1 }}&per_page={{ per_page }}{% if filter_suite %}&suite={{ filter_suite }}{% endif %}{% if filter_branch %}&branch={{ filter_branch }}{% endif %}{% if filter_passed %}&passed={{ filter_passed }}{% endif %}{% if filter_environment %}&environment={{ filter_environment }}{% endif %}"
+         class="btn btn-ghost" style="padding:5px 12px; font-size:12px;">&#8592; Prev</a>
+      {% endif %}
+      <span style="font-size:12px; color:#6b7280; padding:5px 0;">{{ page }} / {{ total_pages }}</span>
+      {% if page < total_pages %}
+      <a href="/dashboard/runs?page={{ page + 1 }}&per_page={{ per_page }}{% if filter_suite %}&suite={{ filter_suite }}{% endif %}{% if filter_branch %}&branch={{ filter_branch }}{% endif %}{% if filter_passed %}&passed={{ filter_passed }}{% endif %}{% if filter_environment %}&environment={{ filter_environment }}{% endif %}"
+         class="btn btn-ghost" style="padding:5px 12px; font-size:12px;">Next &#8594;</a>
+      {% endif %}
+    </div>
+  </div>
+
+  {% else %}
+  <div style="padding:60px; text-align:center; color:#4b5563;">
+    <p style="font-size:14px; color:#6b7280;">No runs match these filters.</p>
+    <a href="/dashboard/runs" style="font-size:12px; margin-top:8px; display:inline-block;">Clear filters</a>
+  </div>
+  {% endif %}
+</div>

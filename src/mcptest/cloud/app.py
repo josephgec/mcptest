@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 
 from mcptest.cloud.config import Settings
 from mcptest.cloud.db import create_all, make_engine, make_session_factory
+from mcptest.cloud.dashboard import create_dashboard_router
+from mcptest.cloud.dashboard import routes as dashboard_routes
 from mcptest.cloud.middleware import add_cors_middleware, rate_limit_middleware
 from mcptest.cloud.routers import baselines, compare, health, metrics, runs
 
@@ -60,6 +62,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             db.close()
 
     app.dependency_overrides[runs.get_db] = get_db
+    app.dependency_overrides[dashboard_routes.get_db] = get_db
 
     # --- Routers -----------------------------------------------------------
     app.include_router(health.router)
@@ -67,6 +70,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(compare.router)
     app.include_router(baselines.router)
     app.include_router(metrics.router)
+    app.include_router(create_dashboard_router())
 
     # Attach the db engine to app state so /health/ready can probe it.
     app.state.db_engine = engine

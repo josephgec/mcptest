@@ -642,11 +642,52 @@ assertions:
   - response_is_json: true
 ```
 
+## Cloud dashboard
+
+`mcptest` ships a lightweight web UI for the cloud backend that runs with zero build
+tooling — Tailwind CSS, htmx, and Chart.js are all loaded from CDN.
+
+### Launch
+
+```bash
+# Install cloud extras
+pip install 'mcptest[cloud]'
+
+# Start the dashboard (opens browser automatically)
+mcptest dashboard
+
+# Custom host / port / database
+mcptest dashboard --host 0.0.0.0 --port 8200 --db ./prod.db --no-browser
+```
+
+The server starts at `http://127.0.0.1:8100/dashboard/` by default.
+
+### Pages
+
+| Page | URL | Description |
+|------|-----|-------------|
+| Overview | `/dashboard/` | Stats cards (total runs, pass rate, avg duration, tool calls, baselines), recent-runs table, per-suite pass/fail bars |
+| Runs | `/dashboard/runs` | Filterable, paginated run list. Dropdowns for suite, branch, status, and environment update the table live via htmx without a full page reload. |
+| Run detail | `/dashboard/runs/{id}` | Full run info: metric scores (horizontal bar chart), collapsible tool-call timeline with arguments and results, input/output panels, promote-as-baseline button. |
+| Trends | `/dashboard/trends` | Chart.js line chart of any metric over time. Baseline runs are marked with stars. Controls for metric, suite, branch, and data limit update the chart instantly. |
+| Baselines | `/dashboard/baselines` | Active baseline table with one-click demote (htmx). Compare any two runs by ID and see a metric delta table with regression indicators. |
+
+### Configuration
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--host` | `127.0.0.1` | Bind address |
+| `--port` | `8100` | Listen port |
+| `--db` | `./mcptest_cloud.db` | SQLite database path (or set `MCPTEST_DATABASE_URL`) |
+| `--no-browser` | off | Skip auto-opening the browser |
+
+The dashboard is backed by the same FastAPI app as `mcptest cloud-push`; all 11 API
+endpoints remain available at their existing paths alongside the dashboard routes.
+
 ## Status
 
-Alpha. The core loop (mock server → runner → assertions → CLI) is functional; cloud
-dashboard, SSE transport, and test packs are under active development. See
-[the implementation plan](#) for details.
+Alpha. The core loop (mock server → runner → assertions → CLI) is functional; SSE
+transport and test packs are under active development.
 
 ## License
 

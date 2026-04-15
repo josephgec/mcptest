@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Runs — mcptest{% endblock %}
+{% block content %}
+
+<div style="margin-bottom:20px; display:flex; justify-content:space-between; align-items:flex-start;">
+  <div>
+    <h1 style="font-size:22px; font-weight:700; color:#f9fafb;">Runs</h1>
+    <p style="font-size:13px; color:#6b7280; margin-top:4px;">{{ total }} run{% if total != 1 %}s{% endif %} found</p>
+  </div>
+</div>
+
+<!-- Filters -->
+<form id="filters" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px; align-items:flex-end;">
+  <div>
+    <label style="display:block; font-size:11px; color:#6b7280; margin-bottom:4px;">Suite</label>
+    <select name="suite" class="form-select"
+      hx-get="/dashboard/runs" hx-target="#runs-table" hx-swap="outerHTML"
+      hx-include="#filters" hx-push-url="false">
+      <option value="">All suites</option>
+      {% for s in suites %}
+      <option value="{{ s }}" {% if filter_suite == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label style="display:block; font-size:11px; color:#6b7280; margin-bottom:4px;">Branch</label>
+    <select name="branch" class="form-select"
+      hx-get="/dashboard/runs" hx-target="#runs-table" hx-swap="outerHTML"
+      hx-include="#filters" hx-push-url="false">
+      <option value="">All branches</option>
+      {% for b in branches %}
+      <option value="{{ b }}" {% if filter_branch == b %}selected{% endif %}>{{ b }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label style="display:block; font-size:11px; color:#6b7280; margin-bottom:4px;">Status</label>
+    <select name="passed" class="form-select"
+      hx-get="/dashboard/runs" hx-target="#runs-table" hx-swap="outerHTML"
+      hx-include="#filters" hx-push-url="false">
+      <option value="">All</option>
+      <option value="true" {% if filter_passed == 'true' %}selected{% endif %}>&#10003; Pass</option>
+      <option value="false" {% if filter_passed == 'false' %}selected{% endif %}>&#10007; Fail</option>
+    </select>
+  </div>
+  {% if environments %}
+  <div>
+    <label style="display:block; font-size:11px; color:#6b7280; margin-bottom:4px;">Environment</label>
+    <select name="environment" class="form-select"
+      hx-get="/dashboard/runs" hx-target="#runs-table" hx-swap="outerHTML"
+      hx-include="#filters" hx-push-url="false">
+      <option value="">All</option>
+      {% for e in environments %}
+      <option value="{{ e }}" {% if filter_environment == e %}selected{% endif %}>{{ e }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  {% endif %}
+</form>
+
+<!-- Runs table (htmx target) -->
+{% include "partials/runs_table.html" %}
+
+{% endblock %}

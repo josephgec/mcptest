@@ -36,11 +36,13 @@ dev = [
     "httpx>=0.27",  # for fastapi TestClient in the cloud tests
     "fastapi>=0.110",
     "sqlalchemy>=2.0",
+    "jinja2>=3.1",  # for dashboard template tests
 ]
 cloud = [
     "fastapi>=0.110",
     "sqlalchemy>=2.0",
     "uvicorn>=0.27",
+    "jinja2>=3.1",
 ]
 docs = [
     "mkdocs>=1.5",

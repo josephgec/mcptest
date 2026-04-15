@@ -1,0 +1,219 @@
+{% extends "base.html" %}
+{% block title %}Trends — mcptest{% endblock %}
+{% block content %}
+
+<div style="margin-bottom:20px;">
+  <h1 style="font-size:22px; font-weight:700; color:#f9fafb;">Metric Trends</h1>
+  <p style="font-size:13px; color:#6b7280; margin-top:4px;">Visualise metric scores over time for any suite and branch.</p>
+</div>
+
+<!-- Controls -->
+<form id="trend-controls" style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:24px; align-items:flex-end;">
+  <div>
+    <label style="display:block; font-size:11px; color:#6b7280; margin-bottom:4px;">Metric</label>
+    <select name="metric" id="metric-select" class="form-select" onchange="fetchTrendData()">
+      {% for m in metrics %}
+      <option value="{{ m }}">{{ m }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label style="display:block; font-size:11px; color:#6b7280; margin-bottom:4px;">Suite</label>
+    <select name="suite" id="suite-select" class="form-select" onchange="fetchTrendData()">
+      <option value="">All suites</option>
+      {% for s in suites %}
+      <option value="{{ s }}">{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label style="display:block; font-size:11px; color:#6b7280; margin-bottom:4px;">Branch</label>
+    <select name="branch" id="branch-select" class="form-select" onchange="fetchTrendData()">
+      <option value="">All branches</option>
+      {% for b in branches %}
+      <option value="{{ b }}">{{ b }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div>
+    <label style="display:block; font-size:11px; color:#6b7280; margin-bottom:4px;">Limit</label>
+    <select name="limit" id="limit-select" class="form-select" onchange="fetchTrendData()">
+      <option value="10">10</option>
+      <option value="25">25</option>
+      <option value="50" selected>50</option>
+      <option value="100">100</option>
+      <option value="200">200</option>
+    </select>
+  </div>
+</form>
+
+<!-- Chart -->
+<div class="card" style="padding:24px; margin-bottom:24px; position:relative;">
+  <div id="chart-empty" style="display:none; padding:40px; text-align:center; color:#4b5563;">
+    <p style="font-size:14px;">No data for the selected filters.</p>
+    <p style="font-size:12px; margin-top:6px;">Try a different metric, suite, or branch.</p>
+  </div>
+  <canvas id="trendsChart" style="max-height:340px;"></canvas>
+  <div id="chart-loading" style="position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(17,24,39,0.7); border-radius:12px; display:none;">
+    <span style="font-size:13px; color:#9ca3af;">Loading&#8230;</span>
+  </div>
+</div>
+
+<!-- Stats summary -->
+<div id="trend-stats" style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px;"></div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+var _chart = null;
+
+function buildUrl() {
+  var metric = document.getElementById('metric-select').value;
+  var suite  = document.getElementById('suite-select').value;
+  var branch = document.getElementById('branch-select').value;
+  var limit  = document.getElementById('limit-select').value;
+  var url = '/dashboard/trends/data?metric=' + encodeURIComponent(metric) + '&limit=' + limit;
+  if (suite)  url += '&suite='  + encodeURIComponent(suite);
+  if (branch) url += '&branch=' + encodeURIComponent(branch);
+  return url;
+}
+
+function formatLabel(iso) {
+  if (!iso) return '';
+  try {
+    var d = new Date(iso);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) +
+           ' ' + d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  } catch(e) { return iso; }
+}
+
+function scoreColor(v) {
+  if (v === null || v === undefined) return '#6b7280';
+  return v >= 0.8 ? '#4ade80' : v >= 0.5 ? '#fbbf24' : '#f87171';
+}
+
+function fetchTrendData() {
+  var loadEl = document.getElementById('chart-loading');
+  var emptyEl = document.getElementById('chart-empty');
+  loadEl.style.display = 'flex';
+
+  fetch(buildUrl())
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      loadEl.style.display = 'none';
+      renderChart(data);
+    })
+    .catch(function() {
+      loadEl.style.display = 'none';
+    });
+}
+
+function renderChart(data) {
+  var labels = (data.labels || []).map(formatLabel);
+  var values = data.values || [];
+  var baselineFlags = data.baseline_flags || [];
+  var metric = data.metric || 'score';
+  var emptyEl = document.getElementById('chart-empty');
+  var canvas  = document.getElementById('trendsChart');
+
+  // Filter nulls for stats
+  var nonNull = values.filter(function(v) { return v !== null && v !== undefined; });
+
+  if (!nonNull.length) {
+    canvas.style.display = 'none';
+    emptyEl.style.display = 'block';
+    renderStats(null, null, null, null);
+    return;
+  }
+  canvas.style.display = 'block';
+  emptyEl.style.display = 'none';
+
+  // Build annotation lines for baselines
+  var pointStyles = values.map(function(v, i) {
+    return baselineFlags[i] ? 'star' : 'circle';
+  });
+  var pointRadii = values.map(function(v, i) {
+    return baselineFlags[i] ? 8 : 4;
+  });
+  var pointColors = values.map(function(v) { return scoreColor(v); });
+
+  var ctx = canvas.getContext('2d');
+  if (_chart) { _chart.destroy(); }
+  _chart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: metric,
+        data: values,
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59,130,246,0.08)',
+        tension: 0.3,
+        fill: true,
+        pointStyle: pointStyles,
+        pointRadius: pointRadii,
+        pointBackgroundColor: pointColors,
+        pointBorderColor: pointColors,
+        spanGaps: true,
+      }]
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) {
+              var v = ctx.raw;
+              var bl = baselineFlags[ctx.dataIndex] ? ' ★ baseline' : '';
+              return ' ' + metric + ': ' + (v !== null ? v.toFixed(3) : 'N/A') + bl;
+            }
+          },
+          backgroundColor: '#1f2937',
+          titleColor: '#9ca3af',
+          bodyColor: '#e5e7eb',
+          borderColor: '#374151',
+          borderWidth: 1,
+        }
+      },
+      scales: {
+        x: {
+          grid: { color: '#1a1f2e' },
+          ticks: { color: '#6b7280', font: { size: 10 }, maxTicksLimit: 10, maxRotation: 30 }
+        },
+        y: {
+          min: 0, max: 1,
+          grid: { color: '#1a1f2e' },
+          ticks: { color: '#6b7280', font: { size: 11 } }
+        }
+      }
+    }
+  });
+
+  // Stats
+  var min = Math.min.apply(null, nonNull);
+  var max = Math.max.apply(null, nonNull);
+  var avg = nonNull.reduce(function(a, b) { return a + b; }, 0) / nonNull.length;
+  var latest = nonNull[nonNull.length - 1];
+  renderStats(min, max, avg, latest);
+}
+
+function renderStats(min, max, avg, latest) {
+  var el = document.getElementById('trend-stats');
+  if (min === null) { el.innerHTML = ''; return; }
+  function card(label, val) {
+    var color = scoreColor(val);
+    return '<div class="stat-card"><div class="stat-label">' + label + '</div>' +
+           '<div style="font-size:24px; font-weight:700; color:' + color + ';">' +
+           (val !== null ? val.toFixed(3) : '—') + '</div></div>';
+  }
+  el.innerHTML = card('Latest', latest) + card('Average', avg) +
+                 card('Best', max) + card('Worst', min);
+}
+
+// Initial load
+document.addEventListener('DOMContentLoaded', fetchTrendData);
+</script>
+{% endblock %}
