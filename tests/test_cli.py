@@ -837,3 +837,193 @@ class TestCloudPushCommand:
         assert payload["branch"] == "main"
         assert payload["git_sha"] == "abc123"
         assert payload["environment"] == "prod"
+
+
+# ---------------------------------------------------------------------------
+# `mcptest run -j N` — parallel execution integration tests
+# ---------------------------------------------------------------------------
+
+
+def _write_multi_case_project(tmp_path: Path, n_cases: int = 4) -> Path:
+    """Write a project with `n_cases` passing test cases."""
+    (tmp_path / "fixtures").mkdir()
+    (tmp_path / "fixtures" / "example.yaml").write_text(_PASSING_FIXTURE)
+    (tmp_path / "examples").mkdir()
+    (tmp_path / "examples" / "agent.py").write_text(_PASSING_AGENT)
+
+    cases_yaml = "".join(
+        f"  - name: case-{i}\n"
+        f"    input: input-{i}\n"
+        f"    assertions:\n"
+        f"      - tool_called: greet\n"
+        for i in range(n_cases)
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_multi.yaml").write_text(
+        "name: multi-suite\n"
+        "fixtures:\n"
+        "  - ../fixtures/example.yaml\n"
+        "agent:\n"
+        f"  command: {sys.executable} ../examples/agent.py\n"
+        "cases:\n"
+        + cases_yaml
+    )
+    return tmp_path
+
+
+class TestRunParallel:
+    def test_parallel_j2_all_results_collected(self, tmp_path: Path) -> None:
+        """All cases appear in results when running with -j 2."""
+        _write_multi_case_project(tmp_path, n_cases=4)
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["run", str(tmp_path / "tests"), "-j", "2", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["total"] == 4
+        assert payload["passed"] == 4
+        assert payload["failed"] == 0
+
+    def test_parallel_json_includes_parallel_metadata(self, tmp_path: Path) -> None:
+        """JSON output has a 'parallel' block with workers, timing, speedup."""
+        _write_multi_case_project(tmp_path, n_cases=2)
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["run", str(tmp_path / "tests"), "-j", "2", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert "parallel" in payload
+        par = payload["parallel"]
+        assert "workers" in par
+        assert "wall_clock_s" in par
+        assert "total_cpu_s" in par
+        assert "speedup" in par
+        assert par["workers"] >= 1
+
+    def test_serial_json_includes_parallel_metadata(self, tmp_path: Path) -> None:
+        """Serial runs (j=1) also include the parallel block with workers=1."""
+        _write_project(tmp_path)
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["run", str(tmp_path / "tests"), "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert "parallel" in payload
+        assert payload["parallel"]["workers"] == 1
+
+    def test_parallel_j0_auto_detect_runs(self, tmp_path: Path) -> None:
+        """-j 0 auto-detects workers and completes without error."""
+        _write_multi_case_project(tmp_path, n_cases=2)
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["run", str(tmp_path / "tests"), "-j", "0", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["total"] == 2
+        assert payload["passed"] == 2
+
+    def test_parallel_fail_fast(self, tmp_path: Path) -> None:
+        """-j 2 --fail-fast stops on first failure."""
+        _write_multi_case_project(tmp_path, n_cases=4)
+        # Overwrite with a mix of pass/fail — first case fails.
+        (tmp_path / "tests" / "test_multi.yaml").write_text(
+            "name: multi-suite\n"
+            "fixtures:\n"
+            "  - ../fixtures/example.yaml\n"
+            "agent:\n"
+            f"  command: {sys.executable} ../examples/agent.py\n"
+            "cases:\n"
+            "  - name: c0-fail\n"
+            "    input: x\n"
+            "    assertions:\n"
+            "      - tool_called: nonexistent\n"
+            "  - name: c1-pass\n"
+            "    input: y\n"
+            "    assertions:\n"
+            "      - tool_called: greet\n"
+            "  - name: c2-pass\n"
+            "    input: z\n"
+            "    assertions:\n"
+            "      - tool_called: greet\n"
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["run", str(tmp_path / "tests"), "-j", "1", "--fail-fast", "--ci"],
+        )
+        assert result.exit_code == 1
+        assert "c0-fail" in result.output
+        # With j=1 and fail-fast, subsequent cases are not executed.
+        assert "c1-pass" not in result.output
+
+    def test_parallel_suite_opt_out(self, tmp_path: Path) -> None:
+        """Suite with parallel: false runs serially even under -j 4."""
+        (tmp_path / "fixtures").mkdir()
+        (tmp_path / "fixtures" / "example.yaml").write_text(_PASSING_FIXTURE)
+        (tmp_path / "examples").mkdir()
+        (tmp_path / "examples" / "agent.py").write_text(_PASSING_AGENT)
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_serial.yaml").write_text(
+            "name: serial-suite\n"
+            "fixtures:\n"
+            "  - ../fixtures/example.yaml\n"
+            "agent:\n"
+            f"  command: {sys.executable} ../examples/agent.py\n"
+            "parallel: false\n"
+            "cases:\n"
+            "  - name: c0\n"
+            "    assertions:\n"
+            "      - tool_called: greet\n"
+            "  - name: c1\n"
+            "    assertions:\n"
+            "      - tool_called: greet\n"
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["run", str(tmp_path / "tests"), "-j", "4", "--json"],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["total"] == 2
+        assert payload["passed"] == 2
+
+    def test_parallel_table_output_no_crash(self, tmp_path: Path) -> None:
+        """Table-format output with -j 2 completes without error."""
+        _write_multi_case_project(tmp_path, n_cases=2)
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["run", str(tmp_path / "tests"), "-j", "2"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "passed" in result.output.lower()
+
+    def test_parallel_ci_exits_nonzero_on_failure(self, tmp_path: Path) -> None:
+        """--ci with -j 2 exits 1 when any case fails."""
+        _write_multi_case_project(tmp_path, n_cases=2)
+        (tmp_path / "tests" / "test_multi.yaml").write_text(
+            "name: multi-suite\n"
+            "fixtures:\n"
+            "  - ../fixtures/example.yaml\n"
+            "agent:\n"
+            f"  command: {sys.executable} ../examples/agent.py\n"
+            "cases:\n"
+            "  - name: fail\n"
+            "    assertions:\n"
+            "      - tool_called: nonexistent\n"
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            main,
+            ["run", str(tmp_path / "tests"), "-j", "2", "--ci"],
+        )
+        assert result.exit_code == 1

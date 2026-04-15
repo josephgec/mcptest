@@ -84,6 +84,7 @@ class TestSuite(BaseModel):
     agent: AgentSpec
     cases: list[TestCase] = Field(default_factory=list)
     description: str | None = None
+    parallel: bool = True
 
     @model_validator(mode="after")
     def _has_cases(self) -> TestSuite:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json as json_module
 import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -197,6 +198,14 @@ def init_command(path: str, force: bool) -> None:
     type=float,
     help="Override pass-rate tolerance for every case (0.0–1.0).",
 )
+@click.option(
+    "-j",
+    "--parallel",
+    "parallel_workers",
+    default=1,
+    type=int,
+    help="Run cases in parallel (0 = auto-detect CPU count, 1 = serial).",
+)
 def run_command(
     path: str,
     ci: bool,
@@ -206,6 +215,7 @@ def run_command(
     fail_fast: bool,
     retry_override: int | None,
     tolerance_override: float | None,
+    parallel_workers: int,
 ) -> None:
     # Backwards compat: --json flag is equivalent to --format json.
     if json_output:
@@ -220,35 +230,115 @@ def run_command(
 
     all_results: list[CaseResult] = []
     stop = False
-    for test_file in files:
-        if stop:
-            break
-        try:
-            suite = load_test_suite(test_file)
-        except TestSuiteLoadError as exc:
-            console.print(f"[red]× {test_file}[/red] {exc}")
-            all_results.append(
-                CaseResult(
-                    suite_name=str(test_file),
-                    case_name="<load>",
-                    trace=Trace(),
-                    assertion_results=[],
-                    error=str(exc),
-                )
-            )
-            if fail_fast:
-                break
-            continue
+    use_parallel = parallel_workers != 1
 
-        for case_result in _iter_suite_results(
-            suite, test_file,
-            retry_override=retry_override,
-            tolerance_override=tolerance_override,
-        ):
-            all_results.append(case_result)
-            if fail_fast and not case_result.passed:
-                stop = True
+    wall_start = time.perf_counter()
+
+    if use_parallel:
+        from mcptest.runner.parallel import CaseWork, ParallelConfig, run_cases_parallel
+
+        def _progress(r: CaseResult) -> None:
+            if format_ == "table":
+                color = "green" if r.passed else "red"
+                label = "PASS" if r.passed else "FAIL"
+                console.print(
+                    f"  [{color}]{label}[/{color}] {r.suite_name} > {r.case_name}"
+                )
+
+        for test_file in files:
+            if stop:
                 break
+            try:
+                suite = load_test_suite(test_file)
+            except TestSuiteLoadError as exc:
+                console.print(f"[red]× {test_file}[/red] {exc}")
+                all_results.append(
+                    CaseResult(
+                        suite_name=str(test_file),
+                        case_name="<load>",
+                        trace=Trace(),
+                        assertion_results=[],
+                        error=str(exc),
+                    )
+                )
+                if fail_fast:
+                    stop = True
+                continue
+
+            work_items, setup_error = _build_suite_work(suite, test_file)
+            if setup_error is not None:
+                all_results.append(setup_error)
+                if fail_fast:
+                    stop = True
+                continue
+
+            if suite.parallel:
+                config = ParallelConfig(
+                    max_workers=parallel_workers, fail_fast=fail_fast
+                )
+                suite_results = run_cases_parallel(
+                    work_items,
+                    config,
+                    retry_override=retry_override,
+                    tolerance_override=tolerance_override,
+                    on_result=_progress,
+                )
+            else:
+                # Suite opted out of parallelism — run cases serially.
+                suite_results = []
+                for w in work_items:
+                    r = _run_case(
+                        w.runner,
+                        w.suite,
+                        w.case,
+                        retry_override=retry_override,
+                        tolerance_override=tolerance_override,
+                    )
+                    suite_results.append(r)
+                    _progress(r)
+                    if fail_fast and not r.passed:
+                        stop = True
+                        break
+
+            all_results.extend(suite_results)
+            if fail_fast and any(not r.passed for r in suite_results) and not stop:
+                stop = True
+
+    else:
+        # Serial path — identical to original behaviour.
+        for test_file in files:
+            if stop:
+                break
+            try:
+                suite = load_test_suite(test_file)
+            except TestSuiteLoadError as exc:
+                console.print(f"[red]× {test_file}[/red] {exc}")
+                all_results.append(
+                    CaseResult(
+                        suite_name=str(test_file),
+                        case_name="<load>",
+                        trace=Trace(),
+                        assertion_results=[],
+                        error=str(exc),
+                    )
+                )
+                if fail_fast:
+                    break
+                continue
+
+            for case_result in _iter_suite_results(
+                suite,
+                test_file,
+                retry_override=retry_override,
+                tolerance_override=tolerance_override,
+            ):
+                all_results.append(case_result)
+                if fail_fast and not case_result.passed:
+                    stop = True
+                    break
+
+    wall_clock_s = time.perf_counter() - wall_start
+    total_cpu_s = sum(r.trace.duration_s for r in all_results)
 
     if format_ == "json":
         # Aggregate per-metric averages across all cases.
@@ -260,12 +350,31 @@ def run_command(
             name: sum(scores) / len(scores)
             for name, scores in metric_totals.items()
         }
+        # Resolve effective worker count (mirrors run_cases_parallel logic).
+        import os as _os
+
+        if use_parallel:
+            effective_workers = parallel_workers
+            if effective_workers == 0:
+                effective_workers = min(
+                    _os.cpu_count() or 1, len(all_results)
+                )
+        else:
+            effective_workers = 1
+
+        speedup = total_cpu_s / wall_clock_s if wall_clock_s > 0 else 1.0
         payload = {
             "passed": sum(1 for r in all_results if r.passed),
             "failed": sum(1 for r in all_results if not r.passed),
             "total": len(all_results),
             "cases": [r.to_dict() for r in all_results],
             "metric_summary": metric_summary,
+            "parallel": {
+                "workers": effective_workers,
+                "wall_clock_s": round(wall_clock_s, 3),
+                "total_cpu_s": round(total_cpu_s, 3),
+                "speedup": round(speedup, 2),
+            },
         }
         click.echo(json_module.dumps(payload, indent=2, default=str))
     elif format_ in ("junit", "tap"):
@@ -280,11 +389,46 @@ def run_command(
         Path(dest).write_text(html_content, encoding="utf-8")
         click.echo(f"HTML report written to {dest}", err=True)
     else:
-        _render_results(console, all_results)
+        _render_results(console, all_results, wall_clock_s=wall_clock_s,
+                        total_cpu_s=total_cpu_s, parallel_workers=parallel_workers
+                        if use_parallel else 1)
 
     failed = sum(1 for r in all_results if not r.passed)
     if failed and ci:
         sys.exit(1)
+
+
+def _build_suite_work(
+    suite: TestSuite,
+    source: Path,
+) -> tuple[list[Any], CaseResult | None]:
+    """Build CaseWork items for a suite without executing any cases.
+
+    Returns ``(work_items, None)`` on success, or ``([], error_result)`` when
+    runner setup fails (missing fixture, bad agent spec, etc.).
+
+    Importing ``CaseWork`` lazily here avoids a circular-import: the parallel
+    module imports ``_run_case`` from this module, while this module imports
+    ``CaseWork`` from the parallel module.
+    """
+    from mcptest.runner.parallel import CaseWork  # noqa: PLC0415
+
+    base_dir = source.parent
+    fixture_paths = suite.resolve_fixtures(base_dir)
+
+    try:
+        adapter = suite.agent.build_adapter(base_dir)
+        runner = Runner(fixtures=fixture_paths, agent=adapter)
+    except (RunnerError, FixtureLoadError, ValueError) as exc:
+        return [], CaseResult(
+            suite_name=suite.name,
+            case_name="<setup>",
+            trace=Trace(),
+            assertion_results=[],
+            error=str(exc),
+        )
+
+    return [CaseWork(suite=suite, case=case, runner=runner) for case in suite.cases], None
 
 
 def _iter_suite_results(
@@ -299,25 +443,16 @@ def _iter_suite_results(
     Yielding instead of building a list lets the top-level runner honour
     ``--fail-fast`` without running every remaining case first.
     """
-    base_dir = source.parent
-    fixture_paths = suite.resolve_fixtures(base_dir)
-
-    try:
-        adapter = suite.agent.build_adapter(base_dir)
-        runner = Runner(fixtures=fixture_paths, agent=adapter)
-    except (RunnerError, FixtureLoadError, ValueError) as exc:
-        yield CaseResult(
-            suite_name=suite.name,
-            case_name="<setup>",
-            trace=Trace(),
-            assertion_results=[],
-            error=str(exc),
-        )
+    work_items, setup_error = _build_suite_work(suite, source)
+    if setup_error is not None:
+        yield setup_error
         return
 
-    for case in suite.cases:
+    for w in work_items:
         yield _run_case(
-            runner, suite, case,
+            w.runner,
+            w.suite,
+            w.case,
             retry_override=retry_override,
             tolerance_override=tolerance_override,
         )
@@ -401,7 +536,14 @@ def _run_case(
     )
 
 
-def _render_results(console: Console, results: list[CaseResult]) -> None:
+def _render_results(
+    console: Console,
+    results: list[CaseResult],
+    *,
+    wall_clock_s: float = 0.0,
+    total_cpu_s: float = 0.0,
+    parallel_workers: int = 1,
+) -> None:
     table = Table(title="mcptest results", show_lines=False)
     table.add_column("Suite")
     table.add_column("Case")
@@ -431,6 +573,18 @@ def _render_results(console: Console, results: list[CaseResult]) -> None:
     console.print(
         f"\n[bold]{passed} passed[/bold], [bold red]{failed} failed[/bold red] ({len(results)} total)"
     )
+
+    # Timing / speedup footer.
+    if wall_clock_s > 0:
+        if parallel_workers != 1 and total_cpu_s > 0:
+            speedup = total_cpu_s / wall_clock_s
+            console.print(
+                f"[dim]⏱  {wall_clock_s:.2f}s wall "
+                f"({total_cpu_s:.2f}s total, {speedup:.1f}× speedup "
+                f"with -j {parallel_workers})[/dim]"
+            )
+        else:
+            console.print(f"[dim]⏱  {wall_clock_s:.2f}s[/dim]")
 
     # Metric summary line (averaged across all cases that have metrics).
     metric_totals: dict[str, list[float]] = {}
