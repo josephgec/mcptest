@@ -428,10 +428,10 @@ class TestToolCoverage:
 
 
 class TestComputeAll:
-    def test_runs_all_six_metrics(self) -> None:
+    def test_runs_all_seven_metrics(self) -> None:
         t = _trace(calls=[_call("a"), _call("b")])
         results = compute_all(t)
-        assert len(results) == 6
+        assert len(results) == 7
 
     def test_all_results_are_metric_result(self) -> None:
         t = _trace()
@@ -443,7 +443,7 @@ class TestComputeAll:
         for r in compute_all(t):
             assert 0.0 <= r.score <= 1.0
 
-    def test_registry_has_all_six(self) -> None:
+    def test_registry_has_all_seven(self) -> None:
         expected = {
             "tool_efficiency",
             "redundancy",
@@ -451,6 +451,7 @@ class TestComputeAll:
             "trajectory_similarity",
             "schema_compliance",
             "tool_coverage",
+            "stability",
         }
         assert expected == set(METRICS.keys())
 
@@ -541,10 +542,11 @@ class TestMetricsCLI:
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert isinstance(data, list)
-        assert len(data) == 6
+        assert len(data) == 7
         names = {d["name"] for d in data}
         assert "tool_efficiency" in names
         assert "schema_compliance" in names
+        assert "stability" in names
         for d in data:
             assert 0.0 <= d["score"] <= 1.0
 

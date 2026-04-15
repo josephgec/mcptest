@@ -45,7 +45,7 @@ from mcptest.fixtures.loader import load_fixtures
 from mcptest.fixtures.models import Fixture
 from mcptest.mock_server.recorder import TRACE_FILE_ENV, read_trace_file
 from mcptest.runner.adapters import AgentAdapter, AgentResult
-from mcptest.runner.trace import Trace
+from mcptest.runner.trace import RetryResult, Trace
 
 
 FIXTURES_ENV = "MCPTEST_FIXTURES"
@@ -128,6 +128,51 @@ class Runner:
     def run_many(self, inputs: list[str]) -> list[Trace]:
         """Run the agent once per input, returning a trace per input."""
         return [self.run(i) for i in inputs]
+
+    def run_with_retry(
+        self,
+        input: str = "",
+        *,
+        retry: int = 1,
+        tolerance: float = 1.0,
+        evaluate: Any | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> RetryResult:
+        """Run the agent *retry* times and aggregate results.
+
+        Parameters
+        ----------
+        input:
+            Input string passed to the agent on every attempt.
+        retry:
+            Number of times to invoke the agent (must be ≥ 1).
+        tolerance:
+            Fraction of attempts that must pass for the overall result to be
+            considered passing.  Passed through to ``RetryResult.from_attempts``.
+        evaluate:
+            Optional callable ``(trace: Trace) -> bool`` that judges each
+            attempt.  When ``None``, the attempt passes iff ``trace.succeeded``.
+        metadata:
+            Extra metadata forwarded to each individual ``run()`` call.
+
+        Returns
+        -------
+        RetryResult
+        """
+        if retry < 1:
+            raise ValueError(f"retry must be >= 1, got {retry!r}")
+
+        traces: list[Trace] = []
+        attempt_results: list[bool] = []
+        for _ in range(retry):
+            trace = self.run(input, metadata=metadata)
+            traces.append(trace)
+            if evaluate is not None:
+                attempt_results.append(bool(evaluate(trace)))
+            else:
+                attempt_results.append(trace.succeeded)
+
+        return RetryResult.from_attempts(traces, attempt_results, tolerance)
 
     def __enter__(self) -> Runner:
         return self

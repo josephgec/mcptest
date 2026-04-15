@@ -18,7 +18,7 @@ from mcptest.metrics.base import MetricResult, _MetricBase, register_metric
 
 if TYPE_CHECKING:
     from mcptest.fixtures.models import Fixture
-    from mcptest.runner.trace import Trace
+    from mcptest.runner.trace import RetryResult, Trace
 
 
 def _result(*, name: str, score: float, label: str, details: dict[str, Any] | None = None) -> MetricResult:
@@ -373,3 +373,111 @@ class tool_coverage(_MetricBase):  # noqa: N801
             label=self.label,
             details={"used": used, "available": available, "unused": unused},
         )
+
+
+# ---------------------------------------------------------------------------
+# Metric 7: stability
+# ---------------------------------------------------------------------------
+
+
+@register_metric
+class stability(_MetricBase):  # noqa: N801
+    """Consistency of pass/fail outcomes across retry attempts.
+
+    Score = 1.0 when all attempts produced the same outcome (perfectly stable
+    or perfectly failing).  Lower scores indicate flakiness.  When no retry
+    data is attached to the trace (single-attempt runs), the score is 1.0
+    and the details note explains why.
+
+    This metric reads ``trace.metadata["retry_result"]`` — a dict serialized
+    from ``RetryResult.to_dict()`` — if present.  The CLI populates this
+    automatically when ``retry > 1``.
+    """
+
+    name: ClassVar[str] = "stability"
+    label: ClassVar[str] = "Stability"
+
+    def compute(
+        self,
+        trace: Trace,
+        *,
+        reference: Trace | None = None,
+        fixtures: list[Fixture] | None = None,
+    ) -> MetricResult:
+        retry_data = trace.metadata.get("retry_result")
+        if retry_data is None:
+            return _result(
+                name=self.name,
+                score=1.0,
+                label=self.label,
+                details={"note": "single-attempt run — no retry data"},
+            )
+
+        attempt_results: list[bool] = [bool(r) for r in retry_data.get("attempt_results", [])]
+        n = len(attempt_results)
+        if n == 0:
+            return _result(
+                name=self.name,
+                score=1.0,
+                label=self.label,
+                details={"note": "no attempt results in retry data"},
+            )
+
+        pass_count = sum(1 for r in attempt_results if r)
+        fail_count = n - pass_count
+        pass_rate = pass_count / n
+
+        # Stability: fraction of same-outcome pairs.
+        if n == 1:
+            stability_score = 1.0
+        else:
+            pairs = n * (n - 1) / 2
+            agreements = sum(
+                1
+                for i in range(n)
+                for j in range(i + 1, n)
+                if attempt_results[i] == attempt_results[j]
+            )
+            stability_score = agreements / pairs
+
+        # Trajectory variance: average pairwise Levenshtein distance across
+        # attempts, normalized by max trajectory length seen.
+        traces_data = retry_data.get("traces", [])
+        trajectory_variance = _trajectory_variance(traces_data)
+
+        return _result(
+            name=self.name,
+            score=stability_score,
+            label=self.label,
+            details={
+                "attempts": n,
+                "pass_count": pass_count,
+                "fail_count": fail_count,
+                "pass_rate": round(pass_rate, 4),
+                "trajectory_variance": round(trajectory_variance, 4),
+            },
+        )
+
+
+def _trajectory_variance(traces_data: list[dict[str, Any]]) -> float:
+    """Mean pairwise normalized Levenshtein distance across attempt tool sequences."""
+    if len(traces_data) <= 1:
+        return 0.0
+
+    tool_seqs: list[list[str]] = [
+        [c.get("tool", "") for c in t.get("tool_calls", [])]
+        for t in traces_data
+    ]
+
+    distances: list[float] = []
+    for i in range(len(tool_seqs)):
+        for j in range(i + 1, len(tool_seqs)):
+            a, b = tool_seqs[i], tool_seqs[j]
+            if not a and not b:
+                distances.append(0.0)
+                continue
+            max_len = max(len(a), len(b))
+            dist = _levenshtein(a, b)
+            distances.append(dist / max_len)
+
+    return sum(distances) / len(distances) if distances else 0.0

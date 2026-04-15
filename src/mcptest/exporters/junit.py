@@ -79,6 +79,13 @@ class JUnitExporter(Exporter):
                         prop.set("name", f"mcptest.metric.{m.name}")
                         prop.set("value", f"{m.score:.4f}")
 
+                # Emit retry/flakiness metadata when multi-attempt data is present.
+                rr = getattr(r, "retry_result", None)
+                if rr is not None and len(rr.traces) > 1:
+                    tc.set("attempts", str(len(rr.traces)))
+                    tc.set("pass_rate", f"{rr.pass_rate:.4f}")
+                    tc.set("stability", f"{rr.stability:.4f}")
+
                 if r.error is not None:
                     err_el = ET.SubElement(tc, "error")
                     err_el.set("message", str(r.error))
@@ -93,14 +100,35 @@ class JUnitExporter(Exporter):
                     err_el.set("type", "AgentError")
                     err_el.text = agent_err
                 elif not r.passed:
-                    for a in (a for a in r.assertion_results if not a.passed):
-                        fail_el = ET.SubElement(tc, "failure")
-                        fail_el.set("message", a.message)
-                        fail_el.set("type", "AssertionFailure")
-                        text_parts = [f"{a.name}: {a.message}"]
-                        for k, v in a.details.items():
-                            text_parts.append(f"  {k}: {v}")
-                        fail_el.text = "\n".join(text_parts)
+                    # For multi-attempt runs: if some attempts passed and some
+                    # failed, this is a flaky failure — emit <flakyFailure>
+                    # (supported by CircleCI, GitLab CI, and Jenkins).
+                    pass_count = sum(1 for v in rr.attempt_results if v) if rr is not None else 0
+                    n_attempts = len(rr.traces) if rr is not None else 1
+                    is_flaky = (
+                        rr is not None
+                        and n_attempts > 1
+                        and 0 < pass_count < n_attempts
+                    )
+                    if is_flaky:
+                        flaky_el = ET.SubElement(tc, "flakyFailure")
+                        flaky_msg = (
+                            f"Flaky: {pass_count}/{n_attempts} attempts passed "
+                            f"(tolerance={rr.tolerance:.2f}, pass_rate={rr.pass_rate:.4f}, "
+                            f"stability={rr.stability:.4f})"
+                        )
+                        flaky_el.set("message", flaky_msg)
+                        flaky_el.set("type", "FlakyFailure")
+                        flaky_el.text = flaky_msg
+                    else:
+                        for a in (a for a in r.assertion_results if not a.passed):
+                            fail_el = ET.SubElement(tc, "failure")
+                            fail_el.set("message", a.message)
+                            fail_el.set("type", "AssertionFailure")
+                            text_parts = [f"{a.name}: {a.message}"]
+                            for k, v in a.details.items():
+                                text_parts.append(f"  {k}: {v}")
+                            fail_el.text = "\n".join(text_parts)
 
         ET.indent(root, space="  ")
         tree = ET.ElementTree(root)

@@ -102,3 +102,91 @@ class Trace:
     @classmethod
     def load(cls, path: str | Path) -> Trace:
         return cls.from_dict(json.loads(Path(path).read_text(encoding="utf-8")))
+
+
+@dataclass(frozen=True)
+class RetryResult:
+    """Aggregated result across multiple retry attempts of a single test case.
+
+    When ``retry == 1`` (the default), this wraps exactly one Trace and the
+    semantics are identical to a plain pass/fail: ``pass_rate`` is 1.0 or 0.0
+    and ``stability`` is 1.0.
+
+    Fields
+    ------
+    traces:
+        One Trace per attempt, in execution order.
+    attempt_results:
+        Per-attempt pass/fail booleans (same length as *traces*).
+    tolerance:
+        Fraction of attempts that must pass for the overall result to be
+        considered passing (e.g. 0.8 means ≥80% must pass).
+    passed:
+        True when ``pass_rate >= tolerance``.
+    pass_rate:
+        Fraction of attempts that passed.
+    stability:
+        Consistency metric in [0.0, 1.0].  1.0 means all attempts produced the
+        same pass/fail outcome (all-pass or all-fail).  Lower values indicate
+        flakiness.  When there is only one attempt, stability is always 1.0.
+    """
+
+    traces: tuple[Trace, ...]
+    attempt_results: tuple[bool, ...]
+    tolerance: float
+    passed: bool
+    pass_rate: float
+    stability: float
+
+    @classmethod
+    def from_attempts(
+        cls,
+        traces: list[Trace],
+        attempt_results: list[bool],
+        tolerance: float,
+    ) -> RetryResult:
+        """Construct a RetryResult from parallel lists of traces and outcomes."""
+        n = len(traces)
+        if n == 0:
+            raise ValueError("RetryResult requires at least one attempt")
+        pass_count = sum(1 for r in attempt_results if r)
+        pass_rate = pass_count / n
+        passed = pass_rate >= tolerance
+        # Stability: 1.0 when all outcomes are identical, lower when mixed.
+        if n == 1:
+            stability = 1.0
+        else:
+            # Fraction of pairs that agree (i.e. same outcome).
+            pairs = n * (n - 1) / 2
+            agreements = sum(
+                1
+                for i in range(n)
+                for j in range(i + 1, n)
+                if attempt_results[i] == attempt_results[j]
+            )
+            stability = agreements / pairs
+        return cls(
+            traces=tuple(traces),
+            attempt_results=tuple(attempt_results),
+            tolerance=tolerance,
+            passed=passed,
+            pass_rate=pass_rate,
+            stability=stability,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "traces": [t.to_dict() for t in self.traces],
+            "attempt_results": list(self.attempt_results),
+            "tolerance": self.tolerance,
+            "passed": self.passed,
+            "pass_rate": self.pass_rate,
+            "stability": self.stability,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> RetryResult:
+        traces = [Trace.from_dict(t) for t in data.get("traces", [])]
+        attempt_results = [bool(r) for r in data.get("attempt_results", [])]
+        tolerance = float(data.get("tolerance", 1.0))
+        return cls.from_attempts(traces, attempt_results, tolerance)

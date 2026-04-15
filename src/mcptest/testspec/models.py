@@ -70,6 +70,8 @@ class TestCase(BaseModel):
     assertions: list[dict[str, Any]] = Field(default_factory=list)
     inject_error: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    retry: int = Field(default=1, ge=1)
+    tolerance: float = Field(default=1.0, ge=0.0, le=1.0)
 
 
 class TestSuite(BaseModel):

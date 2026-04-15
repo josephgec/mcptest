@@ -23,7 +23,7 @@ from mcptest.cli.scaffold import ScaffoldError, scaffold_project
 from mcptest.diff import BaselineStore, diff_traces
 from mcptest.fixtures.loader import FixtureLoadError, load_fixture
 from mcptest.registry import InstallError, install_pack, list_packs, PACKS
-from mcptest.runner import Runner, RunnerError, SubprocessAdapter, Trace
+from mcptest.runner import RetryResult, Runner, RunnerError, SubprocessAdapter, Trace
 from mcptest.testspec import (
     TestCase,
     TestSuite,
@@ -46,17 +46,22 @@ class CaseResult:
     assertion_results: list[AssertionResult]
     error: str | None = None
     metrics: list[Any] = field(default_factory=list)  # list[MetricResult]
+    retry_result: RetryResult | None = None
 
     @property
     def passed(self) -> bool:
+        if self.error is not None:
+            return False
+        # When multi-attempt retry data is present, use its aggregate verdict.
+        if self.retry_result is not None:
+            return self.retry_result.passed
         return (
-            self.error is None
-            and self.trace.succeeded
+            self.trace.succeeded
             and all(r.passed for r in self.assertion_results)
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "suite": self.suite_name,
             "case": self.case_name,
             "passed": self.passed,
@@ -65,6 +70,9 @@ class CaseResult:
             "assertions": [r.to_dict() for r in self.assertion_results],
             "metrics": [m.to_dict() for m in self.metrics],
         }
+        if self.retry_result is not None:
+            d["retry"] = self.retry_result.to_dict()
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> CaseResult:
@@ -89,6 +97,9 @@ class CaseResult:
             )
             for m in data.get("metrics", [])
         ]
+        retry_result: RetryResult | None = None
+        if "retry" in data:
+            retry_result = RetryResult.from_dict(data["retry"])
         return cls(
             suite_name=data["suite"],
             case_name=data["case"],
@@ -96,6 +107,7 @@ class CaseResult:
             assertion_results=assertion_results,
             error=data.get("error"),
             metrics=metrics,
+            retry_result=retry_result,
         )
 
 
@@ -171,8 +183,29 @@ def init_command(path: str, force: bool) -> None:
     is_flag=True,
     help="Stop at the first failing case.",
 )
+@click.option(
+    "--retry",
+    "retry_override",
+    default=None,
+    type=int,
+    help="Override retry count for every case (must be >= 1).",
+)
+@click.option(
+    "--tolerance",
+    "tolerance_override",
+    default=None,
+    type=float,
+    help="Override pass-rate tolerance for every case (0.0–1.0).",
+)
 def run_command(
-    path: str, ci: bool, json_output: bool, format_: str, output_path: str | None, fail_fast: bool
+    path: str,
+    ci: bool,
+    json_output: bool,
+    format_: str,
+    output_path: str | None,
+    fail_fast: bool,
+    retry_override: int | None,
+    tolerance_override: float | None,
 ) -> None:
     # Backwards compat: --json flag is equivalent to --format json.
     if json_output:
@@ -207,7 +240,11 @@ def run_command(
                 break
             continue
 
-        for case_result in _iter_suite_results(suite, test_file):
+        for case_result in _iter_suite_results(
+            suite, test_file,
+            retry_override=retry_override,
+            tolerance_override=tolerance_override,
+        ):
             all_results.append(case_result)
             if fail_fast and not case_result.passed:
                 stop = True
@@ -250,7 +287,13 @@ def run_command(
         sys.exit(1)
 
 
-def _iter_suite_results(suite: TestSuite, source: Path):
+def _iter_suite_results(
+    suite: TestSuite,
+    source: Path,
+    *,
+    retry_override: int | None = None,
+    tolerance_override: float | None = None,
+):
     """Yield one CaseResult per case in order, lazily.
 
     Yielding instead of building a list lets the top-level runner honour
@@ -273,20 +316,23 @@ def _iter_suite_results(suite: TestSuite, source: Path):
         return
 
     for case in suite.cases:
-        yield _run_case(runner, suite, case)
-
-
-def _run_case(runner: Runner, suite: TestSuite, case: TestCase) -> CaseResult:
-    try:
-        trace = runner.run(case.input)
-    except Exception as exc:  # pragma: no cover - defensive
-        return CaseResult(
-            suite_name=suite.name,
-            case_name=case.name,
-            trace=Trace(input=case.input),
-            assertion_results=[],
-            error=str(exc),
+        yield _run_case(
+            runner, suite, case,
+            retry_override=retry_override,
+            tolerance_override=tolerance_override,
         )
+
+
+def _run_case(
+    runner: Runner,
+    suite: TestSuite,
+    case: TestCase,
+    *,
+    retry_override: int | None = None,
+    tolerance_override: float | None = None,
+) -> CaseResult:
+    retry = retry_override if retry_override is not None else case.retry
+    tolerance = tolerance_override if tolerance_override is not None else case.tolerance
 
     try:
         assertions = parse_assertions(case.assertions)
@@ -294,21 +340,64 @@ def _run_case(runner: Runner, suite: TestSuite, case: TestCase) -> CaseResult:
         return CaseResult(
             suite_name=suite.name,
             case_name=case.name,
-            trace=trace,
+            trace=Trace(input=case.input),
             assertion_results=[],
             error=f"assertion parse error: {exc}",
         )
 
-    results = check_all(assertions, trace)
     from mcptest.metrics import compute_all as _compute_all
 
-    metric_results = _compute_all(trace)
+    if retry == 1:
+        # Fast path — identical to original behaviour.
+        try:
+            trace = runner.run(case.input)
+        except Exception as exc:  # pragma: no cover - defensive
+            return CaseResult(
+                suite_name=suite.name,
+                case_name=case.name,
+                trace=Trace(input=case.input),
+                assertion_results=[],
+                error=str(exc),
+            )
+        results = check_all(assertions, trace)
+        metric_results = _compute_all(trace)
+        return CaseResult(
+            suite_name=suite.name,
+            case_name=case.name,
+            trace=trace,
+            assertion_results=results,
+            metrics=metric_results,
+        )
+
+    # Multi-attempt path — run N times, evaluate assertions on each attempt.
+    def _evaluate(trace: Trace) -> bool:
+        if not trace.succeeded:
+            return False
+        return all(r.passed for r in check_all(assertions, trace))
+
+    retry_result = runner.run_with_retry(
+        case.input,
+        retry=retry,
+        tolerance=tolerance,
+        evaluate=_evaluate,
+    )
+
+    # Use the last trace as the "representative" for metrics / exporters.
+    representative_trace = retry_result.traces[-1]
+    # Inject retry_result into the representative trace's metadata so that the
+    # stability metric (and any future metric) can read per-attempt data.
+    representative_trace.metadata["retry_result"] = retry_result.to_dict()
+    # Assertion results from the last attempt.
+    last_assertion_results = check_all(assertions, representative_trace)
+    metric_results = _compute_all(representative_trace)
+
     return CaseResult(
         suite_name=suite.name,
         case_name=case.name,
-        trace=trace,
-        assertion_results=results,
+        trace=representative_trace,
+        assertion_results=last_assertion_results,
         metrics=metric_results,
+        retry_result=retry_result,
     )
 
 

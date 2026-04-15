@@ -24,6 +24,7 @@ DEFAULT_THRESHOLDS: dict[str, float] = {
     "trajectory_similarity": 0.1,
     "schema_compliance": 0.1,
     "tool_coverage": 0.1,
+    "stability": 0.1,
 }
 
 

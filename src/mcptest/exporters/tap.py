@@ -27,10 +27,15 @@ class TAPExporter(Exporter):
 
         for i, r in enumerate(results, start=1):
             test_id = f"{r.suite_name}::{r.case_name}"
+            rr = getattr(r, "retry_result", None)
             if r.passed:
-                lines.append(
-                    f"ok {i} - {test_id} # time={r.trace.duration_s:.3f}s"
-                )
+                time_comment = f" # time={r.trace.duration_s:.3f}s"
+                if rr is not None and len(rr.traces) > 1:
+                    time_comment += (
+                        f" pass_rate={rr.pass_rate:.3f}"
+                        f" stability={rr.stability:.3f}"
+                    )
+                lines.append(f"ok {i} - {test_id}{time_comment}")
             else:
                 lines.append(f"not ok {i} - {test_id}")
                 diag = _build_diagnostic(r)
@@ -44,6 +49,19 @@ class TAPExporter(Exporter):
                 for line in yaml_str.splitlines():
                     lines.append(f"  {line}")
                 lines.append("  ...")
+
+            # Emit per-attempt subtests when retry > 1.
+            if rr is not None and len(rr.traces) > 1:
+                n = len(rr.traces)
+                lines.append(f"    1..{n}")
+                for attempt_idx, (attempt_trace, attempt_passed) in enumerate(
+                    zip(rr.traces, rr.attempt_results), start=1
+                ):
+                    ok_str = "ok" if attempt_passed else "not ok"
+                    lines.append(
+                        f"    {ok_str} {attempt_idx} - attempt {attempt_idx}"
+                        f" # time={attempt_trace.duration_s:.3f}s"
+                    )
 
         return "\n".join(lines) + "\n"
 
@@ -61,9 +79,17 @@ def _build_diagnostic(r: Any) -> dict[str, Any]:
         )
         diag["severity"] = "error"
     else:
-        failed = [a for a in r.assertion_results if not a.passed]
-        if failed:
-            diag["message"] = "; ".join(a.message for a in failed)
+        rr = getattr(r, "retry_result", None)
+        if rr is not None and len(rr.traces) > 1:
+            pass_count = sum(1 for v in rr.attempt_results if v)
+            diag["message"] = (
+                f"Flaky: {pass_count}/{len(rr.traces)} attempts passed "
+                f"(tolerance={rr.tolerance:.2f})"
+            )
+        else:
+            failed = [a for a in r.assertion_results if not a.passed]
+            if failed:
+                diag["message"] = "; ".join(a.message for a in failed)
         diag["severity"] = "fail"
 
     diag["duration_s"] = r.trace.duration_s
@@ -71,5 +97,14 @@ def _build_diagnostic(r: Any) -> dict[str, Any]:
         diag["trace_id"] = r.trace.trace_id
     if r.metrics:
         diag["metrics"] = {m.name: round(m.score, 4) for m in r.metrics}
+
+    rr = getattr(r, "retry_result", None)
+    if rr is not None and len(rr.traces) > 1:
+        diag["retry"] = {
+            "attempts": len(rr.traces),
+            "pass_rate": round(rr.pass_rate, 4),
+            "stability": round(rr.stability, 4),
+            "tolerance": rr.tolerance,
+        }
 
     return diag
