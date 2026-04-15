@@ -68,6 +68,11 @@ asyncio_mode = "auto"
 filterwarnings = [
     "error",
     "ignore::DeprecationWarning",
+    # Unraisable exceptions from cross-test event-loop teardown noise — the
+    # asyncio cleanup is not deterministic across test files and triggers
+    # ResourceWarnings we can't tie back to a specific test. Not indicative
+    # of real test failures.
+    "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
 
 [tool.coverage.run]

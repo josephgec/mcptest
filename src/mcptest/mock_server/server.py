@@ -283,3 +283,64 @@ class MockMCPServer:
 
         async with mcp.server.stdio.stdio_server() as (read, write):
             await self.run(read, write)
+
+    def build_sse_app(self, endpoint: str = "/messages/") -> Any:
+        """Build a Starlette ASGI app exposing this mock over MCP SSE.
+
+        The returned app has two routes:
+
+        - `GET /sse` — clients open a long-lived SSE stream here; the
+          response carries the MCP server → client messages.
+        - `POST {endpoint}` — clients POST each JSON-RPC request here;
+          by convention this is `/messages/`.
+
+        Any ASGI runner (uvicorn, hypercorn, Starlette's TestClient,
+        httpx.ASGITransport) can serve the app, which keeps this unit-testable.
+        """
+        from mcp.server.sse import SseServerTransport
+        from starlette.applications import Starlette
+        from starlette.responses import Response
+        from starlette.routing import Mount, Route
+
+        transport = SseServerTransport(endpoint)
+        lowlevel = self.build_lowlevel_server()
+        init_options = InitializationOptions(
+            server_name=self.fixture.server.name,
+            server_version=self.fixture.server.version,
+            capabilities=lowlevel.get_capabilities(
+                notification_options=NotificationOptions(),
+                experimental_capabilities={},
+            ),
+        )
+
+        async def handle_sse(request: Any) -> Response:  # pragma: no cover
+            async with transport.connect_sse(
+                request.scope, request.receive, request._send
+            ) as (read_stream, write_stream):
+                await lowlevel.run(read_stream, write_stream, init_options)
+            return Response()
+
+        return Starlette(
+            routes=[
+                Route("/sse", endpoint=handle_sse, methods=["GET"]),
+                Mount(endpoint, app=transport.handle_post_message),
+            ]
+        )
+
+    async def run_sse(
+        self,
+        host: str = "127.0.0.1",
+        port: int = 8765,
+        endpoint: str = "/messages/",
+    ) -> None:  # pragma: no cover
+        """Run as an SSE HTTP server via uvicorn.
+
+        Blocks until cancelled; uncovered for the same reason as `run_stdio`.
+        Session 7's integration test exercises `build_sse_app` directly.
+        """
+        import uvicorn
+
+        app = self.build_sse_app(endpoint=endpoint)
+        config = uvicorn.Config(app=app, host=host, port=port, log_level="error")
+        server = uvicorn.Server(config)
+        await server.serve()
