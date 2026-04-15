@@ -64,6 +64,38 @@ class CaseResult:
             "metrics": [m.to_dict() for m in self.metrics],
         }
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> CaseResult:
+        """Reconstruct a CaseResult from its ``to_dict()`` representation."""
+        from mcptest.metrics.base import MetricResult
+
+        assertion_results = [
+            AssertionResult(
+                passed=a["passed"],
+                name=a["name"],
+                message=a["message"],
+                details=a.get("details", {}),
+            )
+            for a in data.get("assertions", [])
+        ]
+        metrics = [
+            MetricResult(
+                name=m["name"],
+                score=m["score"],
+                label=m["label"],
+                details=m.get("details", {}),
+            )
+            for m in data.get("metrics", [])
+        ]
+        return cls(
+            suite_name=data["suite"],
+            case_name=data["case"],
+            trace=Trace.from_dict(data.get("trace", {})),
+            assertion_results=assertion_results,
+            error=data.get("error"),
+            metrics=metrics,
+        )
+
 
 # ---------------------------------------------------------------------------
 # init — scaffold a new project
@@ -116,15 +148,28 @@ def init_command(path: str, force: bool) -> None:
     "--json",
     "json_output",
     is_flag=True,
-    help="Emit machine-readable JSON on stdout instead of a human-friendly table.",
+    help="Emit machine-readable JSON on stdout (equivalent to --format json).",
+)
+@click.option(
+    "--format",
+    "format_",
+    type=click.Choice(["table", "json", "junit", "tap"]),
+    default="table",
+    help="Output format: table (default), json, junit (JUnit XML), or tap (TAP v14).",
 )
 @click.option(
     "--fail-fast",
     is_flag=True,
     help="Stop at the first failing case.",
 )
-def run_command(path: str, ci: bool, json_output: bool, fail_fast: bool) -> None:
-    console = Console(stderr=json_output)
+def run_command(
+    path: str, ci: bool, json_output: bool, format_: str, fail_fast: bool
+) -> None:
+    # Backwards compat: --json flag is equivalent to --format json.
+    if json_output:
+        format_ = "json"
+
+    console = Console(stderr=(format_ != "table"))
 
     files = discover_test_files(path)
     if not files:
@@ -159,7 +204,7 @@ def run_command(path: str, ci: bool, json_output: bool, fail_fast: bool) -> None
                 stop = True
                 break
 
-    if json_output:
+    if format_ == "json":
         # Aggregate per-metric averages across all cases.
         metric_totals: dict[str, list[float]] = {}
         for r in all_results:
@@ -177,6 +222,10 @@ def run_command(path: str, ci: bool, json_output: bool, fail_fast: bool) -> None
             "metric_summary": metric_summary,
         }
         click.echo(json_module.dumps(payload, indent=2, default=str))
+    elif format_ in ("junit", "tap"):
+        from mcptest.exporters import get_exporter
+
+        click.echo(get_exporter(format_).export(all_results))
     else:
         _render_results(console, all_results)
 
@@ -784,6 +833,39 @@ def install_pack_command(name: str, path: str, force: bool) -> None:
     )
     for rel in written:
         console.print(f"  [dim]created[/dim] {rel}")
+
+
+# ---------------------------------------------------------------------------
+# export — convert a saved mcptest JSON result file to another CI format
+# ---------------------------------------------------------------------------
+
+
+@click.command(help="Convert a mcptest JSON result file to another CI format.")
+@click.argument("run_json", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--format",
+    "format_",
+    type=click.Choice(["junit", "tap"]),
+    required=True,
+    help="Output format: junit (JUnit XML) or tap (TAP v14).",
+)
+def export_command(run_json: str, format_: str) -> None:
+    from mcptest.exporters import get_exporter
+
+    console = Console()
+    try:
+        data = json_module.loads(Path(run_json).read_text(encoding="utf-8"))
+    except Exception as exc:
+        console.print(f"[red]error:[/red] could not read {run_json}: {exc}")
+        sys.exit(1)
+
+    try:
+        results = [CaseResult.from_dict(c) for c in data.get("cases", [])]
+    except Exception as exc:
+        console.print(f"[red]error:[/red] could not parse results: {exc}")
+        sys.exit(1)
+
+    click.echo(get_exporter(format_).export(results))
 
 
 @click.command(

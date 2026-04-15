@@ -30,6 +30,10 @@ inputs:
     description: "Version of mcptest to install (e.g. '0.1.0' or 'latest')."
     required: false
     default: "latest"
+  output_format:
+    description: "Output format for test results: json (default), junit, or tap."
+    required: false
+    default: "json"
 
 outputs:
   passed:
@@ -67,6 +71,11 @@ runs:
         mcptest run "${{ inputs.test_path }}" --json > mcptest-results.json
         EXIT=$?
         cat mcptest-results.json
+        if [ "${{ inputs.output_format }}" = "junit" ]; then
+          mcptest export mcptest-results.json --format junit > mcptest-results.xml
+        elif [ "${{ inputs.output_format }}" = "tap" ]; then
+          mcptest export mcptest-results.json --format tap > mcptest-results.tap
+        fi
         PASSED=$(python -c "import json; print(json.load(open('mcptest-results.json'))['passed'])")
         FAILED=$(python -c "import json; print(json.load(open('mcptest-results.json'))['failed'])")
         echo "passed=$PASSED" >> "$GITHUB_OUTPUT"
@@ -75,6 +84,14 @@ runs:
           exit 1
         fi
         exit 0
+
+    - name: Upload JUnit XML artifact
+      if: ${{ inputs.output_format == 'junit' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: mcptest-junit-results
+        path: mcptest-results.xml
+        if-no-files-found: ignore
 
     - name: Diff against baselines
       if: ${{ inputs.fail_on_regression == 'true' }}

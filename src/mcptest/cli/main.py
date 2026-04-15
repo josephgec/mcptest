@@ -9,6 +9,7 @@ from mcptest.cli.commands import (
     cloud_push_command,
     compare_command,
     diff_command,
+    export_command,
     init_command,
     install_pack_command,
     list_packs_command,
@@ -35,6 +36,7 @@ def main() -> None:  # pragma: no cover - click entry
 
 main.add_command(init_command, name="init")
 main.add_command(run_command, name="run")
+main.add_command(export_command, name="export")
 main.add_command(validate_command, name="validate")
 main.add_command(record_command, name="record")
 main.add_command(snapshot_command, name="snapshot")
