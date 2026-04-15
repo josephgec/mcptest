@@ -1,0 +1,59 @@
+# mcptest cloud — local development / demo stack
+#
+# Usage:
+#   docker compose up          # start API + Postgres
+#   docker compose up -d       # detached
+#   docker compose down -v     # stop and remove volumes
+#
+# Override env vars by creating a .env file in this directory:
+#   MCPTEST_API_KEYS=my-secret-key
+#   MCPTEST_AUTH_REQUIRED=true
+#   POSTGRES_PASSWORD=changeme
+
+services:
+  mcptest-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mcptest-cloud:latest
+    ports:
+      - "8000:8000"
+    environment:
+      MCPTEST_DATABASE_URL: "postgresql+psycopg2://mcptest:${POSTGRES_PASSWORD:-mcptest}@postgres:5432/mcptest"
+      MCPTEST_API_KEYS: "${MCPTEST_API_KEYS:-}"
+      MCPTEST_AUTH_REQUIRED: "${MCPTEST_AUTH_REQUIRED:-false}"
+      MCPTEST_CORS_ORIGINS: "${MCPTEST_CORS_ORIGINS:-*}"
+      MCPTEST_RATE_LIMIT: "${MCPTEST_RATE_LIMIT:-60}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mcptest
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-mcptest}"
+      POSTGRES_DB: mcptest
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mcptest -d mcptest"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres_data:
+    driver: local

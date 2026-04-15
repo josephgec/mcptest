@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from mcptest.cloud.auth import require_auth
 from mcptest.cloud.models import TestRun
 from mcptest.cloud.routers.runs import get_db
 from mcptest.cloud.schemas import (
@@ -38,6 +39,7 @@ _DEFAULT_THRESHOLD = 0.1
     "/runs/{run_id}/promote",
     response_model=BaselinePromoteOut,
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_auth)],
 )
 def promote_baseline(
     run_id: int,
@@ -79,6 +81,7 @@ def promote_baseline(
     "/runs/{run_id}/promote",
     response_model=BaselinePromoteOut,
     status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_auth)],
 )
 def demote_baseline(
     run_id: int,

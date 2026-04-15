@@ -65,6 +65,15 @@ class HealthStatus(BaseModel):
     version: str = "0.1.0"
 
 
+class HealthReadyStatus(BaseModel):
+    """Response for GET /health/ready — includes database connectivity."""
+
+    status: str  # "ready" | "unavailable"
+    db: str  # "ok" | "error: <detail>"
+    service: str = "mcptest-cloud"
+    version: str = "0.1.0"
+
+
 class ComparisonDelta(BaseModel):
     """Per-metric delta between a base and head run."""
 

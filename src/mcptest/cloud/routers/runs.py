@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from mcptest.cloud.auth import require_auth
 from mcptest.cloud.models import TestRun
 from mcptest.cloud.schemas import TestRunCreate, TestRunOut
 
@@ -27,6 +28,7 @@ def get_db() -> Session:  # pragma: no cover
     "",
     response_model=TestRunOut,
     status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_auth)],
 )
 def create_run(
     payload: TestRunCreate,
@@ -81,7 +83,7 @@ def get_run(
     return run
 
 
-@router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{run_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(require_auth)])
 def delete_run(
     run_id: int,
     db: Annotated[Session, Depends(get_db)],

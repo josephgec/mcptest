@@ -910,6 +910,13 @@ def export_command(run_json: str, format_: str) -> None:
     is_flag=True,
     help="Emit machine-readable JSON on stdout.",
 )
+@click.option(
+    "--api-key",
+    "api_key",
+    envvar="MCPTEST_API_KEY",
+    default=None,
+    help="API key sent as X-API-Key header (env: MCPTEST_API_KEY).",
+)
 def cloud_push_command(
     trace_json: str,
     url: str,
@@ -923,6 +930,7 @@ def cloud_push_command(
     promote: bool,
     ci: bool,
     json_output: bool,
+    api_key: str | None,
 ) -> None:
     import urllib.error
     import urllib.request
@@ -962,12 +970,18 @@ def cloud_push_command(
         "environment": environment,
     }
 
+    def _headers() -> dict[str, str]:
+        h = {"Content-Type": "application/json"}
+        if api_key:
+            h["X-API-Key"] = api_key
+        return h
+
     # POST /runs
     try:
         req = urllib.request.Request(
             f"{url.rstrip('/')}/runs",
             data=json_module.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
+            headers=_headers(),
             method="POST",
         )
         with urllib.request.urlopen(req) as resp:
@@ -992,7 +1006,7 @@ def cloud_push_command(
             req = urllib.request.Request(
                 f"{url.rstrip('/')}/runs/{run_id}/promote",
                 data=b"",
-                headers={"Content-Type": "application/json"},
+                headers=_headers(),
                 method="POST",
             )
             with urllib.request.urlopen(req) as resp:
@@ -1010,7 +1024,7 @@ def cloud_push_command(
             req = urllib.request.Request(
                 f"{url.rstrip('/')}/runs/{run_id}/check",
                 data=b"",
-                headers={"Content-Type": "application/json"},
+                headers=_headers(),
                 method="POST",
             )
             with urllib.request.urlopen(req) as resp:

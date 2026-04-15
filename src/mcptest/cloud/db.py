@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 
 class Base(DeclarativeBase):
@@ -14,10 +15,21 @@ class Base(DeclarativeBase):
 
 
 def make_engine(database_url: str, **kwargs: Any) -> Engine:
-    """Build a SQLAlchemy engine. Uses `check_same_thread=False` for SQLite."""
+    """Build a SQLAlchemy engine.
+
+    For file-based SQLite, sets ``check_same_thread=False`` so sessions can
+    be used across threads (FastAPI TestClient uses threads).
+
+    For in-memory SQLite (``sqlite:///:memory:``), additionally uses
+    ``StaticPool`` so all connections share the same in-process database —
+    without this, each new connection would get a fresh empty database and
+    tables created by ``create_all`` would not be visible to later sessions.
+    """
     connect_args: dict[str, Any] = {}
     if database_url.startswith("sqlite"):
         connect_args["check_same_thread"] = False
+    if database_url == "sqlite:///:memory:":
+        kwargs.setdefault("poolclass", StaticPool)
     return create_engine(database_url, connect_args=connect_args, future=True, **kwargs)
 
 
