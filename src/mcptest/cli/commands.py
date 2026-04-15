@@ -153,9 +153,16 @@ def init_command(path: str, force: bool) -> None:
 @click.option(
     "--format",
     "format_",
-    type=click.Choice(["table", "json", "junit", "tap"]),
+    type=click.Choice(["table", "json", "junit", "tap", "html"]),
     default="table",
-    help="Output format: table (default), json, junit (JUnit XML), or tap (TAP v14).",
+    help="Output format: table (default), json, junit (JUnit XML), tap (TAP v14), or html.",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    default=None,
+    help="Write output to this file (required for html; defaults to mcptest-report.html).",
 )
 @click.option(
     "--fail-fast",
@@ -163,7 +170,7 @@ def init_command(path: str, force: bool) -> None:
     help="Stop at the first failing case.",
 )
 def run_command(
-    path: str, ci: bool, json_output: bool, format_: str, fail_fast: bool
+    path: str, ci: bool, json_output: bool, format_: str, output_path: str | None, fail_fast: bool
 ) -> None:
     # Backwards compat: --json flag is equivalent to --format json.
     if json_output:
@@ -226,6 +233,13 @@ def run_command(
         from mcptest.exporters import get_exporter
 
         click.echo(get_exporter(format_).export(all_results))
+    elif format_ == "html":
+        from mcptest.exporters import get_exporter
+
+        dest = output_path or "mcptest-report.html"
+        html_content = get_exporter("html").export(all_results)
+        Path(dest).write_text(html_content, encoding="utf-8")
+        click.echo(f"HTML report written to {dest}", err=True)
     else:
         _render_results(console, all_results)
 
@@ -845,11 +859,18 @@ def install_pack_command(name: str, path: str, force: bool) -> None:
 @click.option(
     "--format",
     "format_",
-    type=click.Choice(["junit", "tap"]),
+    type=click.Choice(["junit", "tap", "html"]),
     required=True,
-    help="Output format: junit (JUnit XML) or tap (TAP v14).",
+    help="Output format: junit (JUnit XML), tap (TAP v14), or html.",
 )
-def export_command(run_json: str, format_: str) -> None:
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    default=None,
+    help="Write output to this file (for html; defaults to mcptest-report.html).",
+)
+def export_command(run_json: str, format_: str, output_path: str | None) -> None:
     from mcptest.exporters import get_exporter
 
     console = Console()
@@ -865,7 +886,12 @@ def export_command(run_json: str, format_: str) -> None:
         console.print(f"[red]error:[/red] could not parse results: {exc}")
         sys.exit(1)
 
-    click.echo(get_exporter(format_).export(results))
+    if format_ == "html":
+        dest = output_path or "mcptest-report.html"
+        Path(dest).write_text(get_exporter("html").export(results), encoding="utf-8")
+        click.echo(f"HTML report written to {dest}", err=True)
+    else:
+        click.echo(get_exporter(format_).export(results))
 
 
 @click.command(

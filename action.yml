@@ -31,7 +31,7 @@ inputs:
     required: false
     default: "latest"
   output_format:
-    description: "Output format for test results: json (default), junit, or tap."
+    description: "Output format for test results: json (default), junit, tap, or html."
     required: false
     default: "json"
 
@@ -75,6 +75,8 @@ runs:
           mcptest export mcptest-results.json --format junit > mcptest-results.xml
         elif [ "${{ inputs.output_format }}" = "tap" ]; then
           mcptest export mcptest-results.json --format tap > mcptest-results.tap
+        elif [ "${{ inputs.output_format }}" = "html" ]; then
+          mcptest export mcptest-results.json --format html --output mcptest-report.html
         fi
         PASSED=$(python -c "import json; print(json.load(open('mcptest-results.json'))['passed'])")
         FAILED=$(python -c "import json; print(json.load(open('mcptest-results.json'))['failed'])")
@@ -91,6 +93,22 @@ runs:
       with:
         name: mcptest-junit-results
         path: mcptest-results.xml
+        if-no-files-found: ignore
+
+    - name: Upload TAP artifact
+      if: ${{ inputs.output_format == 'tap' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: mcptest-tap-results
+        path: mcptest-results.tap
+        if-no-files-found: ignore
+
+    - name: Upload HTML report artifact
+      if: ${{ inputs.output_format == 'html' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: mcptest-html-report
+        path: mcptest-report.html
         if-no-files-found: ignore
 
     - name: Diff against baselines
