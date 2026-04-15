@@ -1836,3 +1836,144 @@ def scorecard_command(
 
     if not scorecard.composite_passed:
         sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# conformance — MCP server protocol conformance testing
+# ---------------------------------------------------------------------------
+
+
+@click.command(
+    help=(
+        "Test an MCP server for protocol conformance.\n\n"
+        "Runs up to 19 checks across 5 sections (initialization, tool_listing,\n"
+        "tool_calling, error_handling, resources) and reports MUST / SHOULD / MAY\n"
+        "violations.  Exit code is 1 when any MUST check fails (or any SHOULD\n"
+        "check fails with --fail-on-should).\n\n"
+        "Use --fixture to run checks in-process against a fixture YAML (fast, no\n"
+        "subprocess).  Omit --fixture to spawn SERVER_COMMAND as a stdio MCP\n"
+        "server subprocess."
+    )
+)
+@click.argument("server_command", required=False, default=None)
+@click.option(
+    "--fixture",
+    "fixture_path",
+    default=None,
+    type=click.Path(exists=True, dir_okay=False),
+    help="Fixture YAML — run checks in-process (no subprocess).",
+)
+@click.option(
+    "--section",
+    "sections",
+    multiple=True,
+    help="Only run checks in this section (repeatable).",
+)
+@click.option(
+    "--severity",
+    "severity_filter",
+    type=click.Choice(["must", "should", "may"], case_sensitive=False),
+    default=None,
+    help="Only run checks at or above this severity.",
+)
+@click.option(
+    "--fail-on-should",
+    is_flag=True,
+    help="Exit 1 if any SHOULD check fails (default: only MUST failures exit 1).",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Emit machine-readable JSON on stdout instead of a human-friendly table.",
+)
+def conformance_command(
+    server_command: str | None,
+    fixture_path: str | None,
+    sections: tuple[str, ...],
+    severity_filter: str | None,
+    fail_on_should: bool,
+    json_output: bool,
+) -> None:
+    import anyio
+
+    from mcptest.conformance import (
+        ConformanceRunner,
+        InProcessServer,
+        Severity,
+        make_stdio_server,
+        render_conformance_report,
+    )
+
+    console = Console(stderr=json_output)
+
+    if fixture_path is None and server_command is None:
+        console.print(
+            "[red]error:[/red] provide either SERVER_COMMAND or --fixture"
+        )
+        sys.exit(1)
+
+    # Build severity filter list
+    severity_map = {
+        "must": [Severity.MUST],
+        "should": [Severity.MUST, Severity.SHOULD],
+        "may": [Severity.MUST, Severity.SHOULD, Severity.MAY],
+    }
+    severities = severity_map.get(severity_filter or "may")
+
+    async def _run() -> list:
+        if fixture_path is not None:
+            # In-process mode: load fixture, build MockMCPServer
+            from mcptest.fixtures.loader import load_fixture as _load_fixture
+            from mcptest.mock_server.server import MockMCPServer
+
+            try:
+                fixture = _load_fixture(fixture_path)
+            except Exception as exc:
+                console.print(f"[red]error:[/red] could not load fixture: {exc}")
+                sys.exit(1)
+
+            mock = MockMCPServer(fixture)
+            server = InProcessServer(mock=mock, fixture=fixture)
+        else:
+            # Subprocess stdio mode
+            try:
+                server = make_stdio_server(server_command)  # type: ignore[arg-type]
+                await server.connect()  # type: ignore[union-attr]
+            except Exception as exc:
+                console.print(
+                    f"[red]error:[/red] could not connect to server: {exc}"
+                )
+                sys.exit(1)
+
+        try:
+            runner = ConformanceRunner(
+                server=server,
+                sections=list(sections) if sections else None,
+                severities=severities,
+            )
+            return await runner.run()
+        finally:
+            await server.close()
+
+    try:
+        results = anyio.run(_run)
+    except SystemExit:
+        raise
+
+    if json_output:
+        click.echo(render_conformance_report(results, as_json=True))
+    else:
+        render_conformance_report(results, as_json=False, console=Console())
+
+    # Determine exit code
+    must_failures = [
+        r for r in results if not r.passed and not r.skipped and r.check.severity == Severity.MUST
+    ]
+    should_failures = [
+        r for r in results
+        if not r.passed and not r.skipped and r.check.severity == Severity.SHOULD
+    ]
+
+    if must_failures or (fail_on_should and should_failures):
+        sys.exit(1)

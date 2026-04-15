@@ -181,6 +181,86 @@ weights:
   error_recovery_rate: 3.0
 ```
 
+## Conformance testing
+
+Verify that any MCP server implementation correctly implements the protocol.
+19 checks across 5 sections, each tagged with RFC 2119 severity (MUST / SHOULD / MAY).
+
+### Quick start
+
+```bash
+# Test a server subprocess over stdio
+mcptest conformance "python my_server.py"
+
+# Test in-process using a fixture YAML (fast, no subprocess)
+mcptest conformance --fixture fixtures/my_server.yaml
+
+# Filter to a specific section
+mcptest conformance --fixture fixtures/my_server.yaml --section initialization
+
+# Only run MUST checks (CI gate — fail only on hard violations)
+mcptest conformance --fixture fixtures/my_server.yaml --severity must
+
+# Also fail on SHOULD violations
+mcptest conformance --fixture fixtures/my_server.yaml --fail-on-should
+
+# Machine-readable output for CI pipelines
+mcptest conformance --fixture fixtures/my_server.yaml --json
+```
+
+### Check catalogue
+
+| ID       | Section        | Severity | Description                                          |
+|----------|----------------|----------|------------------------------------------------------|
+| INIT-001 | initialization | MUST     | Server provides non-empty name                       |
+| INIT-002 | initialization | MUST     | Server info includes version string                  |
+| INIT-003 | initialization | MUST     | Server reports capabilities object                   |
+| INIT-004 | initialization | SHOULD   | Capabilities includes `tools` when server has tools  |
+| TOOL-001 | tool_listing   | MUST     | `list_tools()` returns a list                        |
+| TOOL-002 | tool_listing   | MUST     | Each tool has `name` and `inputSchema` fields        |
+| TOOL-003 | tool_listing   | MUST     | All tool names are unique                            |
+| TOOL-004 | tool_listing   | SHOULD   | Each `inputSchema` has `type: "object"` at root      |
+| CALL-001 | tool_calling   | MUST     | Calling a valid tool with matching arguments returns result |
+| CALL-002 | tool_calling   | MUST     | Result contains `content` list                       |
+| CALL-003 | tool_calling   | MUST     | Successful result has `isError` absent or False      |
+| CALL-004 | tool_calling   | MUST     | Calling unknown tool name returns error              |
+| CALL-005 | tool_calling   | SHOULD   | Error response sets `isError` to True                |
+| ERR-001  | error_handling | MUST     | Error result contains text content with message      |
+| ERR-002  | error_handling | SHOULD   | Server handles empty arguments dict without crashing |
+| ERR-003  | error_handling | SHOULD   | Server handles None arguments without crashing       |
+| RES-001  | resources      | MUST     | `list_resources()` returns a list                    |
+| RES-002  | resources      | MUST     | Each resource has `uri` and `name` fields            |
+| RES-003  | resources      | MUST     | Resource URIs are unique                             |
+
+Resource checks (RES-*) are automatically skipped when the server has no `resources` capability.
+
+### CI integration
+
+```yaml
+# .github/workflows/conformance.yml
+- name: MCP conformance
+  run: mcptest conformance --fixture fixtures/server.yaml --severity must --json > conformance.json
+```
+
+Exit code is 1 when any MUST check fails (or any SHOULD check fails with `--fail-on-should`).
+
+### Programmatic usage
+
+```python
+import anyio
+from mcptest.conformance import ConformanceRunner, InProcessServer, Severity
+from mcptest.fixtures.loader import load_fixture
+from mcptest.mock_server.server import MockMCPServer
+
+fixture = load_fixture("fixtures/my_server.yaml")
+mock = MockMCPServer(fixture)
+server = InProcessServer(mock=mock, fixture=fixture)
+
+runner = ConformanceRunner(server=server, severities=[Severity.MUST])
+results = anyio.run(runner.run)
+must_failures = [r for r in results if not r.passed and not r.skipped]
+```
+
 ## Status
 
 Alpha. The core loop (mock server → runner → assertions → CLI) is functional; cloud
