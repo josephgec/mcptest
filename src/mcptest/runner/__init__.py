@@ -6,6 +6,7 @@ from mcptest.runner.adapters import (
     AgentAdapter,
     AgentResult,
     CallableAdapter,
+    PythonScriptAdapter,
     SubprocessAdapter,
 )
 from mcptest.runner.runner import Runner, RunnerError
@@ -15,6 +16,7 @@ __all__ = [
     "AgentAdapter",
     "AgentResult",
     "CallableAdapter",
+    "PythonScriptAdapter",
     "Runner",
     "RunnerError",
     "SubprocessAdapter",

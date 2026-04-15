@@ -1,0 +1,56 @@
+server:
+  name: mock-e2e
+  version: "1.0"
+  description: End-to-end smoke fixture for the scripted agent example.
+
+tools:
+  - name: greet
+    description: Say hello to someone.
+    input_schema:
+      type: object
+      properties:
+        name: { type: string }
+      required: [name]
+    responses:
+      - match: { name: "world" }
+        return:
+          message: "Hello, world!"
+      - default: true
+        return:
+          message: "Hello, friend."
+
+  - name: list_issues
+    description: Return the open issues for a repo.
+    responses:
+      - return:
+          issues:
+            - id: 1
+              title: "First bug"
+            - id: 2
+              title: "Second bug"
+
+  - name: create_issue
+    description: Create a new issue.
+    input_schema:
+      type: object
+      properties:
+        repo: { type: string }
+        title: { type: string }
+      required: [repo, title]
+    responses:
+      - match: { repo: "acme/api" }
+        return:
+          issue_number: 42
+          url: "https://github.com/acme/api/issues/42"
+      - default: true
+        error: rate_limited
+
+  - name: farewell
+    responses:
+      - return_text: "Goodbye."
+
+errors:
+  - name: rate_limited
+    tool: create_issue
+    error_code: -32000
+    message: "GitHub rate limit exceeded"
