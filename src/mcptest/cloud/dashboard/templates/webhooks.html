@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}Webhooks — mcptest dashboard{% endblock %}
+
+{% block content %}
+<div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:24px;">
+  <div>
+    <h1 style="font-size:22px; font-weight:700; color:#f9fafb; margin:0;">Webhooks</h1>
+    <p style="font-size:13px; color:#6b7280; margin:4px 0 0;">Manage HTTP callbacks for regression and run events.</p>
+  </div>
+  <button class="btn btn-primary" onclick="document.getElementById('add-webhook-form').style.display='block'; this.style.display='none';">
+    + Add Webhook
+  </button>
+</div>
+
+<!-- Add Webhook Form (hidden by default) -->
+<div id="add-webhook-form" class="card" style="padding:24px; margin-bottom:24px; display:none;">
+  <h2 style="font-size:15px; font-weight:600; color:#f9fafb; margin:0 0 16px;">New Webhook</h2>
+  <form method="post" action="/webhooks" style="display:grid; gap:14px;">
+    <div>
+      <label style="display:block; font-size:12px; color:#9ca3af; margin-bottom:4px;">Endpoint URL *</label>
+      <input name="url" type="url" required class="form-input" style="width:100%;" placeholder="https://your-server.example.com/hook">
+    </div>
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+      <div>
+        <label style="display:block; font-size:12px; color:#9ca3af; margin-bottom:4px;">Signing Secret (optional)</label>
+        <input name="secret" type="text" class="form-input" style="width:100%;" placeholder="Leave blank to skip signing">
+      </div>
+      <div>
+        <label style="display:block; font-size:12px; color:#9ca3af; margin-bottom:4px;">Suite Filter (optional)</label>
+        <input name="suite_filter" type="text" class="form-input" style="width:100%;" placeholder="e.g. smoke — leave blank for all">
+      </div>
+    </div>
+    <div>
+      <label style="display:block; font-size:12px; color:#9ca3af; margin-bottom:8px;">Subscribe to Events *</label>
+      <div style="display:flex; flex-wrap:wrap; gap:10px;">
+        {% for event in all_events %}
+        <label style="display:flex; align-items:center; gap:6px; font-size:13px; color:#d1d5db; cursor:pointer;">
+          <input type="checkbox" name="events" value="{{ event }}" style="accent-color:#3b82f6;">
+          <code style="background:#1f2937; padding:2px 6px; border-radius:4px; font-size:12px;">{{ event }}</code>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+    <div style="display:flex; gap:8px; padding-top:4px;">
+      <button type="submit" class="btn btn-primary">Create Webhook</button>
+      <button type="button" class="btn btn-ghost" onclick="document.getElementById('add-webhook-form').style.display='none'; document.querySelector('.btn-primary').style.display='inline-block';">Cancel</button>
+    </div>
+  </form>
+</div>
+
+<!-- Webhooks Table -->
+{% if webhook_data %}
+<div class="card" style="overflow:hidden;">
+  <table>
+    <thead>
+      <tr>
+        <th>URL</th>
+        <th>Events</th>
+        <th>Suite Filter</th>
+        <th>Status</th>
+        <th>Deliveries</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in webhook_data %}
+      {% set wh = item.webhook %}
+      <tr>
+        <td>
+          <span style="font-family:monospace; font-size:12px; color:#93c5fd;" title="{{ wh.url }}">
+            {{ wh.url[:60] }}{% if wh.url|length > 60 %}…{% endif %}
+          </span>
+          {% if wh.suite_filter %}
+          {% endif %}
+        </td>
+        <td>
+          <div style="display:flex; flex-wrap:wrap; gap:4px;">
+            {% for evt in (wh.events or []) %}
+            <code style="background:#1e3a5f; color:#93c5fd; border:1px solid #1d4ed8; border-radius:4px; padding:1px 5px; font-size:11px;">{{ evt }}</code>
+            {% endfor %}
+          </div>
+        </td>
+        <td>
+          {% if wh.suite_filter %}
+          <code style="background:#1f2937; color:#d1d5db; border-radius:4px; padding:2px 6px; font-size:12px;">{{ wh.suite_filter }}</code>
+          {% else %}
+          <span style="color:#4b5563;">all suites</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if wh.active %}
+          <span class="badge-pass">active</span>
+          {% else %}
+          <span class="badge-fail">inactive</span>
+          {% endif %}
+        </td>
+        <td>
+          {% if item.total_deliveries == 0 %}
+          <span style="color:#4b5563;">none yet</span>
+          {% else %}
+          <span style="color:#d1d5db;">{{ item.total_deliveries }}</span>
+          {% if item.success_rate is not none %}
+          <span style="color:{% if item.success_rate >= 90 %}#4ade80{% elif item.success_rate >= 50 %}#facc15{% else %}#f87171{% endif %}; font-size:12px; margin-left:4px;">{{ item.success_rate }}%</span>
+          {% endif %}
+          {% endif %}
+        </td>
+        <td>
+          <div style="display:flex; gap:6px; align-items:center;">
+            <form method="post" action="/webhooks/{{ wh.id }}/test" style="display:inline;">
+              <button type="submit" class="btn btn-ghost" style="padding:4px 10px; font-size:12px;">Test</button>
+            </form>
+            <form method="delete" action="/webhooks/{{ wh.id }}" style="display:inline;" onsubmit="return confirm('Delete this webhook?')">
+              <button type="submit" class="btn btn-danger" style="padding:4px 10px; font-size:12px;">Delete</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+
+      <!-- Delivery log accordion -->
+      {% if item.recent_deliveries %}
+      <tr>
+        <td colspan="6" style="background:#0d1117; padding:0;">
+          <details style="padding:12px 16px;">
+            <summary style="font-size:12px; color:#6b7280; font-weight:500;">
+              Recent deliveries ({{ item.total_deliveries }} total)
+            </summary>
+            <div style="margin-top:10px; overflow-x:auto;">
+              <table style="font-size:12px;">
+                <thead>
+                  <tr>
+                    <th style="padding:6px 12px;">Time</th>
+                    <th style="padding:6px 12px;">Event</th>
+                    <th style="padding:6px 12px;">Status</th>
+                    <th style="padding:6px 12px;">HTTP</th>
+                    <th style="padding:6px 12px;">Attempt</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for d in item.recent_deliveries %}
+                  <tr>
+                    <td style="padding:6px 12px; color:#6b7280;">{{ d.created_at | time_ago }}</td>
+                    <td style="padding:6px 12px;"><code style="font-size:11px; color:#93c5fd;">{{ d.event }}</code></td>
+                    <td style="padding:6px 12px;">
+                      {% if d.success %}
+                      <span class="badge-pass">ok</span>
+                      {% else %}
+                      <span class="badge-fail">failed</span>
+                      {% endif %}
+                    </td>
+                    <td style="padding:6px 12px; color:#d1d5db;">
+                      {% if d.response_status %}{{ d.response_status }}{% else %}—{% endif %}
+                    </td>
+                    <td style="padding:6px 12px; color:#6b7280;">{{ d.attempt }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+              {% if item.total_deliveries > 5 %}
+              <p style="font-size:11px; color:#4b5563; padding:6px 12px;">
+                Showing 5 of {{ item.total_deliveries }} deliveries.
+                <a href="/webhooks/{{ wh.id }}/deliveries">View all via API</a>
+              </p>
+              {% endif %}
+            </div>
+          </details>
+        </td>
+      </tr>
+      {% endif %}
+
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% else %}
+<div class="card" style="padding:48px; text-align:center;">
+  <p style="font-size:32px; margin-bottom:12px;">&#x1F4E1;</p>
+  <p style="color:#6b7280; font-size:14px;">No webhooks configured yet.</p>
+  <p style="color:#4b5563; font-size:13px; margin-top:6px;">Click <strong style="color:#d1d5db;">+ Add Webhook</strong> to register your first endpoint.</p>
+</div>
+{% endif %}
+
+<!-- Available events reference -->
+<div style="margin-top:24px;">
+  <p class="section-title">Available Events</p>
+  <div style="display:flex; flex-wrap:wrap; gap:10px;">
+    {% set event_descriptions = {
+      "run.created": "Fires when a new test run is pushed to the cloud.",
+      "regression.detected": "Fires when a run check detects metric regressions vs baseline.",
+      "baseline.promoted": "Fires when a run is promoted as the suite baseline.",
+      "baseline.demoted": "Fires when a baseline is demoted/removed."
+    } %}
+    {% for event in all_events %}
+    <div class="card" style="padding:12px 16px; min-width:220px;">
+      <code style="font-size:12px; color:#93c5fd;">{{ event }}</code>
+      <p style="font-size:12px; color:#6b7280; margin-top:4px;">{{ event_descriptions.get(event, '') }}</p>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

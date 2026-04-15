@@ -671,6 +671,7 @@ The server starts at `http://127.0.0.1:8100/dashboard/` by default.
 | Run detail | `/dashboard/runs/{id}` | Full run info: metric scores (horizontal bar chart), collapsible tool-call timeline with arguments and results, input/output panels, promote-as-baseline button. |
 | Trends | `/dashboard/trends` | Chart.js line chart of any metric over time. Baseline runs are marked with stars. Controls for metric, suite, branch, and data limit update the chart instantly. |
 | Baselines | `/dashboard/baselines` | Active baseline table with one-click demote (htmx). Compare any two runs by ID and see a metric delta table with regression indicators. |
+| Webhooks | `/dashboard/webhooks` | Register and manage HTTP webhook endpoints. Create webhooks with event subscriptions, view delivery history, and send test pings. |
 
 ### Configuration
 
@@ -681,8 +682,86 @@ The server starts at `http://127.0.0.1:8100/dashboard/` by default.
 | `--db` | `./mcptest_cloud.db` | SQLite database path (or set `MCPTEST_DATABASE_URL`) |
 | `--no-browser` | off | Skip auto-opening the browser |
 
-The dashboard is backed by the same FastAPI app as `mcptest cloud-push`; all 11 API
+The dashboard is backed by the same FastAPI app as `mcptest cloud-push`; all API
 endpoints remain available at their existing paths alongside the dashboard routes.
+
+## Webhook system
+
+mcptest cloud can POST signed JSON notifications to external HTTP endpoints when
+key events occur — completing the CI loop from `cloud-push` through auto-regression
+check to team alert.
+
+### Events
+
+| Event | Fires when |
+|-------|-----------|
+| `run.created` | A new test run is pushed via `POST /runs` |
+| `regression.detected` | `POST /runs/{id}/check` finds metric regressions vs baseline |
+| `baseline.promoted` | A run is promoted as the suite baseline |
+| `baseline.demoted` | A baseline is demoted/removed |
+
+### API
+
+```bash
+# Register a webhook
+curl -X POST http://localhost:8100/webhooks \
+  -H "X-API-Key: $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://hooks.slack.com/services/...",
+    "secret": "my-signing-secret",
+    "events": ["regression.detected", "baseline.promoted"],
+    "suite_filter": "smoke"
+  }'
+
+# List webhooks
+curl http://localhost:8100/webhooks -H "X-API-Key: $KEY"
+
+# Send a test ping
+curl -X POST http://localhost:8100/webhooks/{id}/test -H "X-API-Key: $KEY"
+
+# View delivery history
+curl http://localhost:8100/webhooks/{id}/deliveries -H "X-API-Key: $KEY"
+```
+
+### Payload format
+
+Every delivery POSTs the same envelope:
+
+```json
+{
+  "event": "regression.detected",
+  "timestamp": "2026-01-15T12:00:00+00:00",
+  "data": {
+    "head_id": 42,
+    "base_id": 37,
+    "suite": "smoke",
+    "branch": "feat/new-prompt",
+    "regression_count": 2,
+    "deltas": [
+      {"name": "tool_efficiency", "base_score": 0.9, "head_score": 0.6, "delta": -0.3}
+    ]
+  }
+}
+```
+
+### Signature verification
+
+When a `secret` is set, each request includes an `X-MCPTest-Signature: sha256=<hex>`
+header.  Verify it in your receiver:
+
+```python
+import hashlib, hmac
+
+def verify(secret: str, body: bytes, header: str) -> bool:
+    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+    provided = header.removeprefix("sha256=")
+    return hmac.compare_digest(expected, provided)
+```
+
+Delivery retries up to 3 times with exponential back-off (1 s, 4 s, 16 s) on
+connection errors or 5xx responses.  Every attempt is logged in the
+`webhook_deliveries` table and visible in the dashboard.
 
 ## Status
 

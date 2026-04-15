@@ -23,6 +23,7 @@ from mcptest.cloud.schemas import (
     ComparisonDelta,
     TestRunOut,
 )
+from mcptest.cloud.webhooks.events import WebhookEvent, dispatch_event
 from mcptest.metrics.base import METRICS
 
 router = APIRouter(tags=["baselines"])
@@ -69,6 +70,12 @@ def promote_baseline(
     run.is_baseline = True
     db.commit()
     db.refresh(run)
+    dispatch_event(
+        db,
+        WebhookEvent.BASELINE_PROMOTED,
+        {"run_id": run.id, "suite": run.suite, "branch": run.branch},
+        suite=run.suite,
+    )
     return BaselinePromoteOut(
         id=run.id,
         suite=run.suite,
@@ -98,6 +105,12 @@ def demote_baseline(
     run.is_baseline = False
     db.commit()
     db.refresh(run)
+    dispatch_event(
+        db,
+        WebhookEvent.BASELINE_DEMOTED,
+        {"run_id": run.id, "suite": run.suite, "branch": run.branch},
+        suite=run.suite,
+    )
     return BaselinePromoteOut(
         id=run.id,
         suite=run.suite,
@@ -206,13 +219,38 @@ def check_run(
 
     overall_passed = not any(d.regressed for d in deltas)
     check_status = "pass" if overall_passed else "fail"
+    regression_count = sum(1 for d in deltas if d.regressed)
+
+    if not overall_passed:
+        dispatch_event(
+            db,
+            WebhookEvent.REGRESSION_DETECTED,
+            {
+                "head_id": run_id,
+                "base_id": base_run.id,
+                "suite": head_run.suite,
+                "branch": head_run.branch,
+                "regression_count": regression_count,
+                "deltas": [
+                    {
+                        "name": d.name,
+                        "base_score": d.base_score,
+                        "head_score": d.head_score,
+                        "delta": d.delta,
+                    }
+                    for d in deltas
+                    if d.regressed
+                ],
+            },
+            suite=head_run.suite,
+        )
 
     return AutoCompareOut(
         base_id=base_run.id,
         head_id=run_id,
         deltas=deltas,
         overall_passed=overall_passed,
-        regression_count=sum(1 for d in deltas if d.regressed),
+        regression_count=regression_count,
         baseline_id=base_run.id,
         baseline_branch=base_run.branch,
         status=check_status,

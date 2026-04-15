@@ -143,3 +143,74 @@ class AutoCompareOut(BaseModel):
     baseline_id: int | None
     baseline_branch: str | None
     status: str  # "pass" | "fail" | "no_baseline"
+
+
+# ---------------------------------------------------------------------------
+# Webhook schemas
+# ---------------------------------------------------------------------------
+
+
+class WebhookCreate(BaseModel):
+    """POST /webhooks request body."""
+
+    url: str
+    secret: str | None = None
+    events: list[str]
+    suite_filter: str | None = None
+    active: bool = True
+
+
+class WebhookUpdate(BaseModel):
+    """PATCH /webhooks/{id} request body — all fields optional."""
+
+    url: str | None = None
+    secret: str | None = None
+    events: list[str] | None = None
+    suite_filter: str | None = None
+    active: bool | None = None
+
+
+class WebhookOut(BaseModel):
+    """Webhook representation in API responses."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    url: str
+    secret: str | None
+    events: list[str]
+    suite_filter: str | None
+    active: bool
+    created_at: datetime
+
+
+class WebhookDeliveryOut(BaseModel):
+    """Webhook delivery audit record."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    webhook_id: int
+    event: str
+    payload: dict[str, Any]
+    response_status: int | None
+    response_body: str | None
+    success: bool
+    attempt: int
+    created_at: datetime
+
+
+class WebhookTestOut(BaseModel):
+    """Response body for POST /webhooks/{id}/test."""
+
+    success: bool
+    status_code: int | None
+    message: str
+
+
+class WebhookEventPayload(BaseModel):
+    """Canonical shape POSTed to webhook URLs."""
+
+    event: str
+    timestamp: datetime
+    data: dict[str, Any]

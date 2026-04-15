@@ -23,6 +23,8 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from mcptest.cloud.models import TestRun
+from mcptest.cloud.webhooks.events import ALL_EVENTS
+from mcptest.cloud.webhooks.models import Webhook, WebhookDelivery
 
 _TEMPLATE_DIR = Path(__file__).parent / "templates"
 
@@ -384,6 +386,71 @@ def create_dashboard_router() -> APIRouter:
                 "active_page": "baselines",
                 "baselines": baselines,
                 "suites": suites,
+            },
+        )
+
+    # ------------------------------------------------------------------
+    # GET /dashboard/webhooks  — webhook management page
+    # ------------------------------------------------------------------
+
+    @router.get("/webhooks")
+    def dashboard_webhooks(
+        request: Request,
+        db: Annotated[Session, Depends(get_db)],
+    ):
+        webhooks = list(
+            db.scalars(select(Webhook).order_by(Webhook.created_at.desc()))
+        )
+
+        # Attach recent deliveries and success rate to each webhook
+        webhook_data = []
+        for wh in webhooks:
+            recent = list(
+                db.scalars(
+                    select(WebhookDelivery)
+                    .where(WebhookDelivery.webhook_id == wh.id)
+                    .order_by(WebhookDelivery.created_at.desc())
+                    .limit(5)
+                )
+            )
+            total_deliveries = (
+                db.scalar(
+                    select(func.count(WebhookDelivery.id)).where(
+                        WebhookDelivery.webhook_id == wh.id
+                    )
+                )
+                or 0
+            )
+            success_count = (
+                db.scalar(
+                    select(func.count(WebhookDelivery.id)).where(
+                        WebhookDelivery.webhook_id == wh.id,
+                        WebhookDelivery.success.is_(True),
+                    )
+                )
+                or 0
+            )
+            success_rate = (
+                round(success_count / total_deliveries * 100)
+                if total_deliveries > 0
+                else None
+            )
+            webhook_data.append(
+                {
+                    "webhook": wh,
+                    "recent_deliveries": recent,
+                    "total_deliveries": total_deliveries,
+                    "success_rate": success_rate,
+                }
+            )
+
+        return templates.TemplateResponse(
+            request,
+            "webhooks.html",
+            context={
+                "active_page": "webhooks",
+                "webhook_data": webhook_data,
+                "all_events": ALL_EVENTS,
             },
         )
 

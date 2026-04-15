@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from mcptest.cloud.auth import require_auth
 from mcptest.cloud.models import TestRun
 from mcptest.cloud.schemas import TestRunCreate, TestRunOut
+from mcptest.cloud.webhooks.events import WebhookEvent, dispatch_event
 
 
 router = APIRouter(prefix="/runs", tags=["runs"])
@@ -45,6 +46,18 @@ def create_run(
             detail=f"trace_id {payload.trace_id!r} already exists",
         ) from exc
     db.refresh(run)
+    dispatch_event(
+        db,
+        WebhookEvent.RUN_CREATED,
+        {
+            "run_id": run.id,
+            "trace_id": run.trace_id,
+            "suite": run.suite,
+            "branch": run.branch,
+            "passed": run.passed,
+        },
+        suite=run.suite,
+    )
     return run
 
 
