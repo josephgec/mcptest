@@ -2300,6 +2300,185 @@ def explain_command(name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# bench — multi-agent benchmark comparison
+# ---------------------------------------------------------------------------
+
+
+@click.command(
+    help=(
+        "Run a test suite against multiple agent profiles and compare results.\n\n"
+        "Profiles are loaded from --agents <file> or from the agents: section\n"
+        "of mcptest.yaml.  All profiles are run against the same test cases,\n"
+        "then ranked by composite quality score.\n\n"
+        "Exit code is 1 when --ci is set and the best composite score is below\n"
+        "--fail-under (default 0.0)."
+    )
+)
+@click.argument(
+    "path",
+    default=None,
+    required=False,
+    type=click.Path(exists=False, resolve_path=True),
+)
+@click.option(
+    "--agents",
+    "-a",
+    "agents_file",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help="YAML file defining agent profiles to benchmark.",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Emit machine-readable JSON on stdout instead of Rich tables.",
+)
+@click.option(
+    "--ci",
+    is_flag=True,
+    help="Exit non-zero when the best composite score is below --fail-under.",
+)
+@click.option(
+    "--fail-under",
+    "fail_under",
+    default=None,
+    type=float,
+    help="CI threshold: exit 1 if best composite score is below this value.",
+)
+@click.option(
+    "--retry",
+    "retry_override",
+    default=None,
+    type=int,
+    help="Override retry count for every case (must be >= 1).",
+)
+@click.option(
+    "--tolerance",
+    "tolerance_override",
+    default=None,
+    type=float,
+    help="Override pass-rate tolerance for every case (0.0–1.0).",
+)
+@click.option(
+    "-j",
+    "--parallel",
+    "parallel_workers",
+    default=None,
+    type=int,
+    help="Parallel workers per agent (reserved for future use).",
+)
+def bench_command(
+    path: str | None,
+    agents_file: str | None,
+    json_output: bool,
+    ci: bool,
+    fail_under: float | None,
+    retry_override: int | None,
+    tolerance_override: float | None,
+    parallel_workers: int | None,
+) -> None:
+    from mcptest.bench import BenchmarkReport, BenchmarkRunner
+    from mcptest.bench.profile import load_profiles, load_profiles_from_config
+    from mcptest.bench.renderer import (
+        render_leaderboard,
+        render_metric_comparison,
+        render_per_test_breakdown,
+    )
+    from mcptest.config import McpTestConfig
+
+    try:
+        _ctx = click.get_current_context()
+        _config: McpTestConfig = (_ctx.obj or {}).get("config") or McpTestConfig()
+    except RuntimeError:
+        _config = McpTestConfig()
+
+    console = Console(stderr=json_output)
+
+    # Resolve test path: CLI arg > config.test_paths[0] > "tests"
+    if path is None:
+        _base = _config.test_paths[0] if _config.test_paths else "tests"
+        path = str(Path(_base).resolve())
+
+    # Load agent profiles: --agents file > config.agents > error
+    if agents_file is not None:
+        agents_path = Path(agents_file)
+        if not agents_path.is_file():
+            console.print(
+                f"[red]error:[/red] agents file not found: {agents_file}"
+            )
+            sys.exit(1)
+        try:
+            profiles = load_profiles(agents_path)
+        except Exception as exc:
+            console.print(
+                f"[red]error:[/red] could not load agent profiles from "
+                f"{agents_file}: {exc}"
+            )
+            sys.exit(1)
+    elif _config.agents:
+        try:
+            profiles = load_profiles_from_config(_config)
+        except Exception as exc:
+            console.print(
+                f"[red]error:[/red] could not load agent profiles from config: {exc}"
+            )
+            sys.exit(1)
+    else:
+        console.print(
+            "[red]error:[/red] no agent profiles found.\n\n"
+            "Provide [bold]--agents <file>[/bold] or add an [bold]agents:[/bold] "
+            "section to [bold]mcptest.yaml[/bold].\n\n"
+            "Example:\n"
+            "  mcptest bench tests/ --agents agents.yaml\n\n"
+            "agents.yaml format:\n"
+            "  agents:\n"
+            "    - name: my-agent\n"
+            "      command: python agents/my_agent.py\n"
+        )
+        sys.exit(1)
+
+    if not profiles:
+        console.print(
+            "[yellow]no agent profiles defined — nothing to benchmark[/yellow]"
+        )
+        return
+
+    # Resolve options from config when not set on CLI
+    if parallel_workers is None:
+        parallel_workers = _config.parallel if _config.parallel is not None else 1
+    if retry_override is None:
+        retry_override = _config.retry
+    if tolerance_override is None:
+        tolerance_override = _config.tolerance
+
+    bench_runner = BenchmarkRunner(
+        profiles=profiles,
+        test_path=path,
+        parallel=parallel_workers,
+        retry_override=retry_override,
+        tolerance_override=tolerance_override,
+    )
+
+    entries = bench_runner.run()
+    report = BenchmarkReport.from_entries(entries)
+
+    if json_output:
+        click.echo(report.to_json())
+    else:
+        render_leaderboard(console, report)
+        render_metric_comparison(console, report)
+        render_per_test_breakdown(console, report)
+
+    if ci:
+        threshold = (
+            fail_under if fail_under is not None else (_config.fail_under or 0.0)
+        )
+        if not report.summaries or report.summaries[0].composite_score < threshold:
+            sys.exit(1)
+
+
 @click.command(help="Show the resolved mcptest configuration and loaded plugins.")
 def config_command() -> None:
     import dataclasses

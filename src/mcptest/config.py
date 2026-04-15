@@ -49,6 +49,9 @@ class McpTestConfig:
     cloud_url: str | None = None
     cloud_api_key_env: str | None = None
 
+    # Agent profiles for benchmarking (mcptest bench)
+    agents: list[dict[str, Any]] = field(default_factory=list)
+
     # Internal: path to the config file that was loaded (None = no file found)
     config_file: Path | None = field(default=None, repr=False)
 
@@ -132,6 +135,10 @@ def _parse_config(raw: dict[str, Any], config_path: Path) -> McpTestConfig:
             cfg.thresholds = {k: float(v) for k, v in raw_thresh.items()}
     if "plugins" in raw:
         cfg.plugins = [str(p) for p in _as_list(raw["plugins"])]
+    if "agents" in raw:
+        raw_agents = raw["agents"]
+        if isinstance(raw_agents, list):
+            cfg.agents = [dict(a) for a in raw_agents if isinstance(a, dict)]
     if "cloud" in raw:
         cloud = raw["cloud"] or {}
         if isinstance(cloud, dict):

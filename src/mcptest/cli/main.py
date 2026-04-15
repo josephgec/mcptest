@@ -6,6 +6,7 @@ import click
 
 from mcptest import __version__
 from mcptest.cli.commands import (
+    bench_command,
     capture_command,
     cloud_push_command,
     compare_command,
@@ -50,6 +51,7 @@ def main(ctx: click.Context) -> None:  # pragma: no cover - click entry
     ctx.obj["loaded_plugins"] = load_plugins(config)
 
 
+main.add_command(bench_command, name="bench")
 main.add_command(init_command, name="init")
 main.add_command(run_command, name="run")
 main.add_command(export_command, name="export")

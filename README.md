@@ -366,6 +366,95 @@ configuration and loaded plugins:
 mcptest config
 ```
 
+## Benchmarking
+
+`mcptest bench` runs the same test suite against multiple agent profiles and
+produces a side-by-side quality comparison.  Use it to quantify which model or
+prompt strategy performs best before migrating, or to add a regression gate to
+CI.
+
+### Define agent profiles
+
+Create an `agents.yaml` file listing the agents to compare:
+
+```yaml
+# agents.yaml
+agents:
+  - name: claude-sonnet
+    command: python agents/claude_agent.py
+    env:
+      MODEL: claude-3-5-sonnet-20241022
+    description: Anthropic Claude Sonnet 3.5
+
+  - name: gpt-4o
+    command: python agents/openai_agent.py
+    env:
+      MODEL: gpt-4o
+    description: OpenAI GPT-4o
+```
+
+Or embed profiles directly in `mcptest.yaml` so no extra file is needed:
+
+```yaml
+# mcptest.yaml
+agents:
+  - name: claude-sonnet
+    command: python agents/claude_agent.py
+    env: { MODEL: claude-3-5-sonnet-20241022 }
+  - name: gpt-4o
+    command: python agents/openai_agent.py
+    env: { MODEL: gpt-4o }
+```
+
+### Run the benchmark
+
+```bash
+# Explicit profiles file
+mcptest bench tests/ --agents agents.yaml
+
+# Profiles from mcptest.yaml
+mcptest bench tests/
+
+# Machine-readable JSON (pipe to jq, store in CI artifacts, etc.)
+mcptest bench tests/ --agents agents.yaml --json | jq .best_agent
+```
+
+The output includes three Rich tables:
+
+* **Leaderboard** — agents ranked by composite score with pass rate, duration,
+  and a `BEST` badge for the winner.
+* **Metric Comparison** — pivot table of per-agent average scores for each
+  quality metric, colour-coded green/yellow/red.
+* **Per-Test Breakdown** — pass/fail grid across agents and test cases,
+  highlighting where agents diverge.
+
+### CI integration
+
+```bash
+# Exit 1 if the best agent's composite score is below 0.75
+mcptest bench tests/ --agents agents.yaml --ci --fail-under 0.75
+```
+
+Add to your pipeline:
+
+```yaml
+# .github/workflows/bench.yml (example)
+- name: Benchmark agents
+  run: mcptest bench tests/ --agents agents.yaml --ci --fail-under 0.75
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--agents <file>` | Load profiles from this YAML file |
+| `--json` | Emit JSON instead of Rich tables |
+| `--ci` | Exit non-zero when best score < `--fail-under` |
+| `--fail-under <float>` | CI composite-score threshold (default 0.0) |
+| `--retry <n>` | Override retry count for every case |
+| `--tolerance <float>` | Override pass-rate tolerance (0.0–1.0) |
+| `-j/--parallel <n>` | Parallel workers per agent |
+
 ## Plugins
 
 Plugins let you add custom assertions, metrics, and exporters without forking
