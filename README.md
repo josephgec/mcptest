@@ -455,6 +455,133 @@ Add to your pipeline:
 | `--tolerance <float>` | Override pass-rate tolerance (0.0–1.0) |
 | `-j/--parallel <n>` | Parallel workers per agent |
 
+## Semantic evaluation
+
+`mcptest eval` scores agent text output against named criteria — no LLM API
+calls required.  Grading is deterministic: keyword coverage, regex patterns,
+and text similarity (levenshtein / Jaccard / cosine).  It is ideal for CI
+pipelines where speed and cost predictability matter.
+
+### Define a rubric
+
+Create a rubric YAML that describes what a good answer looks like:
+
+```yaml
+# rubrics/booking.yaml
+rubric:
+  name: booking-quality
+  criteria:
+    - name: correctness
+      weight: 0.5
+      method: keywords
+      expected: [confirmed, booking_id, receipt]
+      threshold: 0.6        # ≥60 % of keywords must be present
+    - name: format
+      weight: 0.3
+      method: pattern
+      expected: "Booking \\w+ confirmed"
+      threshold: 1.0        # regex must match
+    - name: completeness
+      weight: 0.2
+      method: similarity
+      expected: "Your booking ABC123 is confirmed. You will receive a receipt."
+      threshold: 0.7        # text similarity must be ≥ 0.7
+```
+
+### Grading methods
+
+| Method | Description |
+|--------|-------------|
+| `keywords` | Fraction of expected keywords found in the text (sub-string) |
+| `pattern` | Binary regex match anywhere in the text (1.0 or 0.0) |
+| `similarity` | Best of levenshtein / Jaccard / cosine similarity against a reference |
+| `contains` | Binary sub-string check (1.0 or 0.0) |
+| `custom` | Reserved for plug-in graders (returns 0.0 by default) |
+
+### Run evaluations
+
+```bash
+# Grade every test case against a rubric file
+mcptest eval tests/ --rubric rubrics/booking.yaml
+
+# Machine-readable JSON
+mcptest eval tests/ --rubric rubrics/booking.yaml --json
+
+# CI gate: exit 1 if mean composite score < 0.75 or any criterion fails
+mcptest eval tests/ --rubric rubrics/booking.yaml --ci --fail-under 0.75
+```
+
+### Inline rubric in test spec
+
+Embed an `eval:` section directly in a test case to avoid a separate file:
+
+```yaml
+# tests/booking.yaml
+name: Booking agent
+fixtures: [fixtures/booking.yaml]
+agent:
+  command: python agent.py
+cases:
+  - name: confirm booking
+    input: "Book a table for 2 at 7pm"
+    assertions:
+      - tool_called: create_booking
+    eval:
+      name: booking-quality
+      criteria:
+        - name: correctness
+          method: keywords
+          expected: [confirmed, booking_id]
+          weight: 1.0
+          threshold: 0.5
+```
+
+### Output
+
+The Rich table shows per-criterion average scores, pass rates, and verdicts:
+
+```
+Evaluation Report — rubric: booking-quality
+
+ Criterion      Avg Score  Pass Rate  Verdict
+ ──────────────────────────────────────────────
+ correctness    0.833      100.0%     PASS
+ format         1.000      100.0%     PASS
+ completeness   0.721       80.0%     PARTIAL
+
+Overall: 4/5 passed (80.0%) — composite score 0.851
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `--rubric <file>` | Load rubric from this YAML file (overrides inline `eval:`) |
+| `--json` | Emit JSON instead of Rich tables |
+| `--ci` | Exit non-zero when any criterion fails or score < `--fail-under` |
+| `--fail-under <float>` | CI composite-score threshold (default 0.0) |
+| `--retry <n>` | Override retry count for every case |
+| `--tolerance <float>` | Override pass-rate tolerance (0.0–1.0) |
+| `-j/--parallel <n>` | Parallel workers |
+
+### Programmatic usage
+
+```python
+from pathlib import Path
+from mcptest.eval import Grader, load_rubric, aggregate_results
+
+rubric = load_rubric(Path("rubrics/booking.yaml"))
+grader = Grader(rubric)
+
+texts = [
+    "Your booking ABC123 is confirmed. Receipt sent.",
+    "Booking confirmed.",
+]
+results = [grader.grade(t) for t in texts]
+summary = aggregate_results(results)
+print(summary.pass_rate, summary.mean_composite)
+```
+
 ## Plugins
 
 Plugins let you add custom assertions, metrics, and exporters without forking

@@ -15,6 +15,7 @@ from mcptest.cli.commands import (
     coverage_command,
     diff_command,
     docs_command,
+    eval_command,
     explain_command,
     export_command,
     generate_command,
@@ -75,6 +76,7 @@ main.add_command(capture_command, name="capture")
 main.add_command(docs_command, name="docs")
 main.add_command(explain_command, name="explain")
 main.add_command(config_command, name="config")
+main.add_command(eval_command, name="eval")
 
 
 if __name__ == "__main__":  # pragma: no cover

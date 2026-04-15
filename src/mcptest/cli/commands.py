@@ -2523,3 +2523,191 @@ def config_command() -> None:
             console.print(f"  [green]✓[/green] {p}")
     else:
         console.print("[dim]No plugins loaded[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# eval — semantic evaluation with custom rubrics
+# ---------------------------------------------------------------------------
+
+
+@click.command(
+    help=(
+        "Evaluate agent outputs against a semantic rubric.\n\n"
+        "Runs test cases under PATH, then scores each agent output against the\n"
+        "criteria defined in --rubric (standalone YAML) or in the 'eval:'\n"
+        "section of each test spec.  All grading is deterministic (keyword\n"
+        "coverage, regex, text similarity) — no LLM API calls required.\n\n"
+        "Exit code is 1 when --ci is set and any criterion fails, or when the\n"
+        "mean composite score is below --fail-under."
+    )
+)
+@click.argument(
+    "test_path",
+    default=None,
+    required=False,
+    type=click.Path(exists=False, resolve_path=True),
+)
+@click.option(
+    "--rubric",
+    "rubric_file",
+    default=None,
+    type=click.Path(dir_okay=False),
+    help="Path to a rubric YAML file (overrides inline eval: sections).",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Emit machine-readable JSON on stdout instead of Rich tables.",
+)
+@click.option(
+    "--ci",
+    is_flag=True,
+    help="Exit non-zero when any criterion fails or composite score < --fail-under.",
+)
+@click.option(
+    "--fail-under",
+    "fail_under",
+    default=0.0,
+    type=float,
+    help="CI threshold: exit 1 if mean composite score is below this value.",
+)
+@click.option(
+    "--retry",
+    "retry_override",
+    default=None,
+    type=int,
+    help="Override retry count for every case (must be >= 1).",
+)
+@click.option(
+    "--tolerance",
+    "tolerance_override",
+    default=None,
+    type=float,
+    help="Override pass-rate tolerance for every case (0.0–1.0).",
+)
+@click.option(
+    "-j",
+    "--parallel",
+    "parallel_workers",
+    default=None,
+    type=int,
+    help="Run cases in parallel (0 = auto-detect CPU count, 1 = serial).",
+)
+def eval_command(
+    test_path: str | None,
+    rubric_file: str | None,
+    json_output: bool,
+    ci: bool,
+    fail_under: float,
+    retry_override: int | None,
+    tolerance_override: float | None,
+    parallel_workers: int | None,
+) -> None:
+    from mcptest.config import McpTestConfig
+    from mcptest.eval import (
+        Grader,
+        aggregate_results,
+        load_rubric,
+        load_rubric_from_dict,
+        render_eval_report,
+    )
+    from mcptest.eval.rubric import Rubric
+
+    try:
+        _ctx = click.get_current_context()
+        _config: McpTestConfig = (_ctx.obj or {}).get("config") or McpTestConfig()
+    except RuntimeError:
+        _config = McpTestConfig()
+
+    console = Console(stderr=json_output)
+
+    # Resolve test path: CLI arg > config.test_paths[0] > "tests"
+    if test_path is None:
+        _base = _config.test_paths[0] if _config.test_paths else "tests"
+        test_path = str(Path(_base).resolve())
+
+    # Resolve parallel workers: CLI arg > config.parallel > 1 (serial)
+    if parallel_workers is None:
+        parallel_workers = _config.parallel if _config.parallel is not None else 1
+    if retry_override is None:
+        retry_override = _config.retry
+    if tolerance_override is None:
+        tolerance_override = _config.tolerance
+
+    # Load rubric from --rubric file if provided.
+    file_rubric: Rubric | None = None
+    if rubric_file is not None:
+        rubric_path = Path(rubric_file)
+        if not rubric_path.is_file():
+            console.print(f"[red]error:[/red] rubric file not found: {rubric_file}")
+            sys.exit(1)
+        try:
+            file_rubric = load_rubric(rubric_path)
+        except Exception as exc:
+            console.print(f"[red]error:[/red] could not load rubric from {rubric_file}: {exc}")
+            sys.exit(1)
+
+    files = discover_test_files(test_path)
+    if not files:
+        console.print(f"[yellow]no test files found under[/yellow] {test_path}")
+        return
+
+    all_results = execute_test_files(
+        files,
+        parallel_workers=parallel_workers,
+        fail_fast=False,
+        retry_override=retry_override,
+        tolerance_override=tolerance_override,
+    )
+
+    # Load test suites to extract inline rubrics per case.
+    inline_rubrics: dict[tuple[str, str], Rubric] = {}
+    for f in files:
+        try:
+            suite = load_test_suite(Path(f))
+            for case in suite.cases:
+                if case.eval:
+                    try:
+                        rubric_data = case.eval
+                        # Allow bare criteria list OR full rubric dict.
+                        if "name" not in rubric_data:
+                            rubric_data = {"name": case.name, **rubric_data}
+                        r = load_rubric_from_dict(rubric_data)
+                        inline_rubrics[(suite.name, case.name)] = r
+                    except Exception:
+                        pass  # Skip malformed inline rubrics silently
+        except Exception:
+            pass
+
+    from mcptest.eval.grader import EvalResult
+
+    eval_results: list[EvalResult] = []
+    for case_result in all_results:
+        key = (case_result.suite_name, case_result.case_name)
+        rubric: Rubric | None = file_rubric or inline_rubrics.get(key)
+        if rubric is None:
+            continue
+        grader = Grader(rubric)
+        eval_result = grader.grade_trace(case_result.trace)
+        eval_results.append(eval_result)
+
+    if not eval_results:
+        console.print(
+            "[yellow]no rubric found for any test case.[/yellow]\n\n"
+            "Provide [bold]--rubric <file>[/bold] or add an [bold]eval:[/bold] "
+            "section to your test spec YAML."
+        )
+        return
+
+    from mcptest.eval import aggregate_results as _aggregate
+
+    summary = _aggregate(eval_results)
+
+    if json_output:
+        click.echo(summary.to_json())
+    else:
+        render_eval_report(console, summary)
+
+    if ci and (not summary.passed_cases == summary.total_cases or summary.mean_composite < fail_under):
+        sys.exit(1)

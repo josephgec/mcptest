@@ -72,6 +72,7 @@ class TestCase(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     retry: int = Field(default=1, ge=1)
     tolerance: float = Field(default=1.0, ge=0.0, le=1.0)
+    eval: dict[str, Any] | None = None  # inline rubric definition for mcptest eval
 
 
 class TestSuite(BaseModel):
