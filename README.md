@@ -34,6 +34,9 @@ and a regression safety net.
 - **Error injection** — trigger named error scenarios to test your agent's recovery paths.
 - **Regression diffing** — snapshot an agent's trajectory and detect drift when prompts,
   models, or MCP servers change.
+- **Watch mode** — `mcptest watch` monitors your test files and fixtures, automatically
+  re-running only the affected tests when anything changes. Smart dependency tracking means
+  only the tests that reference a changed fixture are re-run.
 - **pytest integration** — use YAML files or write Python tests with fixtures.
 - **CI/CD ready** — GitHub Action + PR comment bot for regression gating.
 
@@ -50,6 +53,9 @@ mcptest init
 
 # 4. Run
 mcptest run
+
+# 5. Watch mode — auto-run on save
+mcptest watch --watch-extra src/
 ```
 
 ## Example fixture

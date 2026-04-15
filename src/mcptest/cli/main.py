@@ -20,6 +20,7 @@ from mcptest.cli.commands import (
     run_command,
     snapshot_command,
     validate_command,
+    watch_command,
 )
 from mcptest.cli.github import badge_command, github_comment_command
 
@@ -52,6 +53,7 @@ main.add_command(compare_command, name="compare")
 main.add_command(cloud_push_command, name="cloud-push")
 main.add_command(generate_command, name="generate")
 main.add_command(coverage_command, name="coverage")
+main.add_command(watch_command, name="watch")
 
 
 if __name__ == "__main__":  # pragma: no cover

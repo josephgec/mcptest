@@ -7,7 +7,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -228,115 +228,31 @@ def run_command(
         console.print(f"[yellow]no test files found under[/yellow] {path}")
         return
 
-    all_results: list[CaseResult] = []
-    stop = False
     use_parallel = parallel_workers != 1
 
+    def _progress(r: CaseResult) -> None:
+        if format_ != "table":
+            return
+        if r.case_name == "<load>" and r.error:
+            # Load errors are always shown inline so the filename is visible
+            # (the table truncates long paths).
+            console.print(f"[red]× {r.suite_name}[/red] {r.error}")
+        elif use_parallel:
+            color = "green" if r.passed else "red"
+            label = "PASS" if r.passed else "FAIL"
+            console.print(
+                f"  [{color}]{label}[/{color}] {r.suite_name} > {r.case_name}"
+            )
+
     wall_start = time.perf_counter()
-
-    if use_parallel:
-        from mcptest.runner.parallel import CaseWork, ParallelConfig, run_cases_parallel
-
-        def _progress(r: CaseResult) -> None:
-            if format_ == "table":
-                color = "green" if r.passed else "red"
-                label = "PASS" if r.passed else "FAIL"
-                console.print(
-                    f"  [{color}]{label}[/{color}] {r.suite_name} > {r.case_name}"
-                )
-
-        for test_file in files:
-            if stop:
-                break
-            try:
-                suite = load_test_suite(test_file)
-            except TestSuiteLoadError as exc:
-                console.print(f"[red]× {test_file}[/red] {exc}")
-                all_results.append(
-                    CaseResult(
-                        suite_name=str(test_file),
-                        case_name="<load>",
-                        trace=Trace(),
-                        assertion_results=[],
-                        error=str(exc),
-                    )
-                )
-                if fail_fast:
-                    stop = True
-                continue
-
-            work_items, setup_error = _build_suite_work(suite, test_file)
-            if setup_error is not None:
-                all_results.append(setup_error)
-                if fail_fast:
-                    stop = True
-                continue
-
-            if suite.parallel:
-                config = ParallelConfig(
-                    max_workers=parallel_workers, fail_fast=fail_fast
-                )
-                suite_results = run_cases_parallel(
-                    work_items,
-                    config,
-                    retry_override=retry_override,
-                    tolerance_override=tolerance_override,
-                    on_result=_progress,
-                )
-            else:
-                # Suite opted out of parallelism — run cases serially.
-                suite_results = []
-                for w in work_items:
-                    r = _run_case(
-                        w.runner,
-                        w.suite,
-                        w.case,
-                        retry_override=retry_override,
-                        tolerance_override=tolerance_override,
-                    )
-                    suite_results.append(r)
-                    _progress(r)
-                    if fail_fast and not r.passed:
-                        stop = True
-                        break
-
-            all_results.extend(suite_results)
-            if fail_fast and any(not r.passed for r in suite_results) and not stop:
-                stop = True
-
-    else:
-        # Serial path — identical to original behaviour.
-        for test_file in files:
-            if stop:
-                break
-            try:
-                suite = load_test_suite(test_file)
-            except TestSuiteLoadError as exc:
-                console.print(f"[red]× {test_file}[/red] {exc}")
-                all_results.append(
-                    CaseResult(
-                        suite_name=str(test_file),
-                        case_name="<load>",
-                        trace=Trace(),
-                        assertion_results=[],
-                        error=str(exc),
-                    )
-                )
-                if fail_fast:
-                    break
-                continue
-
-            for case_result in _iter_suite_results(
-                suite,
-                test_file,
-                retry_override=retry_override,
-                tolerance_override=tolerance_override,
-            ):
-                all_results.append(case_result)
-                if fail_fast and not case_result.passed:
-                    stop = True
-                    break
-
+    all_results = execute_test_files(
+        files,
+        parallel_workers=parallel_workers,
+        fail_fast=fail_fast,
+        retry_override=retry_override,
+        tolerance_override=tolerance_override,
+        on_result=_progress,
+    )
     wall_clock_s = time.perf_counter() - wall_start
     total_cpu_s = sum(r.trace.duration_s for r in all_results)
 
@@ -534,6 +450,127 @@ def _run_case(
         metrics=metric_results,
         retry_result=retry_result,
     )
+
+
+def execute_test_files(
+    files: list[Path],
+    *,
+    parallel_workers: int = 1,
+    fail_fast: bool = False,
+    retry_override: int | None = None,
+    tolerance_override: float | None = None,
+    on_result: Callable[[CaseResult], None] | None = None,
+) -> list[CaseResult]:
+    """Run a list of test suite files and return all :class:`CaseResult` objects.
+
+    Shared between :func:`run_command` and :class:`~mcptest.watch.WatchEngine`.
+    Does not write any output; use the *on_result* callback for live progress.
+    """
+    all_results: list[CaseResult] = []
+    stop = False
+    use_parallel = parallel_workers != 1
+
+    if use_parallel:
+        from mcptest.runner.parallel import ParallelConfig, run_cases_parallel  # noqa: PLC0415
+
+        for test_file in files:
+            if stop:
+                break
+            try:
+                suite = load_test_suite(test_file)
+            except TestSuiteLoadError as exc:
+                r = CaseResult(
+                    suite_name=str(test_file),
+                    case_name="<load>",
+                    trace=Trace(),
+                    assertion_results=[],
+                    error=str(exc),
+                )
+                all_results.append(r)
+                if on_result:
+                    on_result(r)
+                if fail_fast:
+                    stop = True
+                continue
+
+            work_items, setup_error = _build_suite_work(suite, test_file)
+            if setup_error is not None:
+                all_results.append(setup_error)
+                if on_result:
+                    on_result(setup_error)
+                if fail_fast:
+                    stop = True
+                continue
+
+            if suite.parallel:
+                config = ParallelConfig(
+                    max_workers=parallel_workers, fail_fast=fail_fast
+                )
+                suite_results = run_cases_parallel(
+                    work_items,
+                    config,
+                    retry_override=retry_override,
+                    tolerance_override=tolerance_override,
+                    on_result=on_result,
+                )
+            else:
+                # Suite opts out of parallelism — run its cases serially.
+                suite_results = []
+                for w in work_items:
+                    r = _run_case(
+                        w.runner,
+                        w.suite,
+                        w.case,
+                        retry_override=retry_override,
+                        tolerance_override=tolerance_override,
+                    )
+                    suite_results.append(r)
+                    if on_result:
+                        on_result(r)
+                    if fail_fast and not r.passed:
+                        stop = True
+                        break
+
+            all_results.extend(suite_results)
+            if fail_fast and any(not r.passed for r in suite_results) and not stop:
+                stop = True
+
+    else:
+        # Serial path.
+        for test_file in files:
+            if stop:
+                break
+            try:
+                suite = load_test_suite(test_file)
+            except TestSuiteLoadError as exc:
+                r = CaseResult(
+                    suite_name=str(test_file),
+                    case_name="<load>",
+                    trace=Trace(),
+                    assertion_results=[],
+                    error=str(exc),
+                )
+                all_results.append(r)
+                if on_result:
+                    on_result(r)
+                if fail_fast:
+                    stop = True
+                continue
+
+            for case_result in _iter_suite_results(
+                suite,
+                test_file,
+                retry_override=retry_override,
+                tolerance_override=tolerance_override,
+            ):
+                all_results.append(case_result)
+                if on_result:
+                    on_result(case_result)
+                if fail_fast and not case_result.passed:
+                    stop = True
+                    break
+
+    return all_results
 
 
 def _render_results(
@@ -1620,3 +1657,82 @@ def _render_coverage(console: Console, report: Any) -> None:
         console.print("\n[bold]Suggestions:[/bold]")
         for s in report.uncovered_summary:
             console.print(f"  [dim]•[/dim] {s}")
+
+
+# ---------------------------------------------------------------------------
+# watch — file-watching test runner
+# ---------------------------------------------------------------------------
+
+
+@click.command(help="Watch test/fixture files and re-run affected tests on save.")
+@click.argument(
+    "path",
+    default="tests",
+    type=click.Path(exists=False, resolve_path=True),
+)
+@click.option(
+    "--clear/--no-clear",
+    default=True,
+    help="Clear screen between runs (default: clear).",
+)
+@click.option(
+    "-j",
+    "--parallel",
+    "parallel_workers",
+    default=1,
+    type=int,
+    help="Run cases in parallel (0 = auto-detect CPU count, 1 = serial).",
+)
+@click.option("--fail-fast", is_flag=True, help="Stop at the first failing case.")
+@click.option(
+    "--debounce",
+    default=300,
+    type=int,
+    help="Change-coalescing window in milliseconds (default: 300).",
+)
+@click.option(
+    "--watch-extra",
+    multiple=True,
+    type=click.Path(resolve_path=True),
+    help="Additional directories to watch (repeatable). Changes here trigger a full re-run.",
+)
+@click.option(
+    "--retry",
+    "retry_override",
+    default=None,
+    type=int,
+    help="Override retry count for every case.",
+)
+@click.option(
+    "--tolerance",
+    "tolerance_override",
+    default=None,
+    type=float,
+    help="Override pass-rate tolerance for every case (0.0–1.0).",
+)
+def watch_command(
+    path: str,
+    clear: bool,
+    parallel_workers: int,
+    fail_fast: bool,
+    debounce: int,
+    watch_extra: tuple[str, ...],
+    retry_override: int | None,
+    tolerance_override: float | None,
+) -> None:
+    from mcptest.watch.engine import WatchConfig, WatchEngine  # noqa: PLC0415
+
+    config = WatchConfig(
+        test_paths=[Path(path)],
+        extra_watch=[Path(p) for p in watch_extra],
+        clear_screen=clear,
+        parallel_workers=parallel_workers,
+        fail_fast=fail_fast,
+        debounce_ms=debounce,
+        retry_override=retry_override,
+        tolerance_override=tolerance_override,
+    )
+    try:
+        WatchEngine(config).run()
+    except KeyboardInterrupt:  # pragma: no cover
+        pass
