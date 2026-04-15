@@ -1,0 +1,98 @@
+name: "mcptest"
+description: "Run mcptest against your MCP agent tests and optionally gate on regressions."
+author: "josephgec"
+branding:
+  icon: "check-circle"
+  color: "purple"
+
+inputs:
+  test_path:
+    description: "Path to the directory containing tests (default: tests/)."
+    required: false
+    default: "tests"
+  fail_on_regression:
+    description: "If true, diff against baselines and fail the job if regressions are detected."
+    required: false
+    default: "false"
+  baseline_path:
+    description: "Path to the baseline directory used by diffing (default: .mcptest/baselines)."
+    required: false
+    default: ".mcptest/baselines"
+  python_version:
+    description: "Python version to set up before installing mcptest."
+    required: false
+    default: "3.12"
+  post_pr_comment:
+    description: "If true, post a summary comment on the PR (requires GITHUB_TOKEN)."
+    required: false
+    default: "false"
+  mcptest_version:
+    description: "Version of mcptest to install (e.g. '0.1.0' or 'latest')."
+    required: false
+    default: "latest"
+
+outputs:
+  passed:
+    description: "Number of passing test cases."
+    value: ${{ steps.run.outputs.passed }}
+  failed:
+    description: "Number of failing test cases."
+    value: ${{ steps.run.outputs.failed }}
+  regressions:
+    description: "Number of detected trajectory regressions."
+    value: ${{ steps.diff.outputs.regressions }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python_version }}
+
+    - name: Install mcptest
+      shell: bash
+      run: |
+        if [ "${{ inputs.mcptest_version }}" = "latest" ]; then
+          python -m pip install --upgrade mcptest
+        else
+          python -m pip install "mcptest==${{ inputs.mcptest_version }}"
+        fi
+
+    - name: Run tests
+      id: run
+      shell: bash
+      run: |
+        set +e
+        mcptest run "${{ inputs.test_path }}" --json > mcptest-results.json
+        EXIT=$?
+        cat mcptest-results.json
+        PASSED=$(python -c "import json; print(json.load(open('mcptest-results.json'))['passed'])")
+        FAILED=$(python -c "import json; print(json.load(open('mcptest-results.json'))['failed'])")
+        echo "passed=$PASSED" >> "$GITHUB_OUTPUT"
+        echo "failed=$FAILED" >> "$GITHUB_OUTPUT"
+        if [ "$FAILED" -gt 0 ]; then
+          exit 1
+        fi
+        exit 0
+
+    - name: Diff against baselines
+      if: ${{ inputs.fail_on_regression == 'true' }}
+      id: diff
+      shell: bash
+      run: |
+        set +e
+        mcptest diff "${{ inputs.test_path }}" --baseline-dir "${{ inputs.baseline_path }}" --ci
+        RC=$?
+        echo "regressions=$RC" >> "$GITHUB_OUTPUT"
+        if [ "$RC" -ne 0 ]; then
+          exit 1
+        fi
+
+    - name: Post PR comment
+      if: ${{ inputs.post_pr_comment == 'true' && github.event_name == 'pull_request' }}
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ env.GITHUB_TOKEN }}
+      run: |
+        cat mcptest-results.json | mcptest github-comment --from-env

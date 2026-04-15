@@ -13,6 +13,7 @@ from mcptest.cli.commands import (
     snapshot_command,
     validate_command,
 )
+from mcptest.cli.github import badge_command, github_comment_command
 
 
 @click.group(
@@ -33,6 +34,8 @@ main.add_command(validate_command, name="validate")
 main.add_command(record_command, name="record")
 main.add_command(snapshot_command, name="snapshot")
 main.add_command(diff_command, name="diff")
+main.add_command(github_comment_command, name="github-comment")
+main.add_command(badge_command, name="badge")
 
 
 if __name__ == "__main__":  # pragma: no cover
