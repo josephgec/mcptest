@@ -43,6 +43,9 @@ and a regression safety net.
   only the tests that reference a changed fixture are re-run.
 - **pytest integration** — use YAML files or write Python tests with fixtures.
 - **CI/CD ready** — GitHub Action + PR comment bot for regression gating.
+- **Inline docs** — `mcptest explain <name>` shows Rich-formatted terminal docs for any
+  assertion, metric, or check. `mcptest docs build` generates a full MkDocs site with
+  auto-generated reference pages that stay in sync with code automatically.
 
 ## Capture — tests write themselves
 
@@ -294,6 +297,33 @@ runner = ConformanceRunner(server=server, severities=[Severity.MUST])
 results = anyio.run(runner.run)
 must_failures = [r for r in results if not r.passed and not r.skipped]
 ```
+
+## Documentation
+
+Full reference documentation is auto-generated from live registries so it never
+goes stale.
+
+```bash
+# Look up any assertion, metric, or check inline
+mcptest explain tool_called
+mcptest explain tool_efficiency
+mcptest explain INIT-001
+
+# List all available assertions, metrics, and checks
+mcptest docs list
+
+# Generate a full MkDocs documentation site
+mcptest docs build --output ./site
+cd site && mkdocs serve
+```
+
+The generated site includes:
+
+- **[Getting Started](docs/getting-started.md)** — capture-first 5-minute quickstart
+- **[Assertions Reference](docs/reference/assertions.md)** — all 19 assertions with YAML examples
+- **[Metrics Reference](docs/reference/metrics.md)** — 7 quality metrics with score interpretation
+- **[Conformance Checks Reference](docs/reference/checks.md)** — 19 protocol checks with severity
+- **[CLI Reference](docs/reference/cli.md)** — every command with full option tables
 
 ## Status
 

@@ -2103,3 +2103,135 @@ def capture_command(
         console.print("  mcptest validate  # check generated files are valid")
 
     anyio.run(_run)
+
+
+# ---------------------------------------------------------------------------
+# docs — build the MkDocs site and list available names
+# ---------------------------------------------------------------------------
+
+
+@click.group(
+    help=(
+        "Generate documentation for mcptest assertions, metrics, and checks.\n\n"
+        "Sub-commands:\n\n"
+        "  build  — Generate a full MkDocs documentation site\n"
+        "  list   — Print all available assertions, metrics, and checks\n"
+        "  serve  — Build and serve the docs locally"
+    )
+)
+def docs_command() -> None:
+    pass
+
+
+@docs_command.command(
+    name="build",
+    help="Generate the MkDocs documentation site.",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_dir",
+    default="site-output",
+    show_default=True,
+    help="Directory to write the site into.",
+)
+def docs_build_command(output_dir: str) -> None:
+    console = Console(stderr=True)
+    from mcptest.docs.site import build_site
+
+    paths = build_site(output_dir)
+    console.print(f"[green]✓[/green] Wrote [bold]{len(paths)}[/bold] file(s) to [bold]{output_dir}[/bold]")
+    for p in sorted(paths):
+        console.print(f"  [dim]{p}[/dim]")
+    console.print(
+        "\n[bold]To serve locally:[/bold]\n"
+        f"  cd {output_dir} && mkdocs serve"
+    )
+
+
+@docs_command.command(
+    name="list",
+    help="List all available assertions, metrics, and conformance checks.",
+)
+def docs_list_command() -> None:
+    from mcptest.docs.terminal import list_all
+
+    click.echo(list_all())
+
+
+@docs_command.command(
+    name="serve",
+    help="Build docs and serve them locally with mkdocs serve (requires mkdocs).",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_dir",
+    default="site-output",
+    show_default=True,
+    help="Directory to write the site into before serving.",
+)
+@click.option(
+    "--port",
+    "-p",
+    default=8000,
+    show_default=True,
+    help="Port for the local HTTP server.",
+)
+def docs_serve_command(output_dir: str, port: int) -> None:
+    import subprocess
+
+    console = Console(stderr=True)
+    from mcptest.docs.site import build_site
+
+    console.print(f"[dim]Building docs into {output_dir!r}…[/dim]")
+    build_site(output_dir)
+
+    try:
+        subprocess.run(
+            ["mkdocs", "serve", "--dev-addr", f"localhost:{port}"],
+            cwd=output_dir,
+            check=True,
+        )
+    except FileNotFoundError:
+        # mkdocs not installed — fall back to Python's built-in HTTP server
+        console.print(
+            "[yellow]mkdocs not found — falling back to python -m http.server[/yellow]"
+        )
+        import os
+
+        docs_dir = Path(output_dir) / "site"
+        serve_dir = docs_dir if docs_dir.exists() else Path(output_dir)
+        console.print(
+            f"[bold]Serving[/bold] {serve_dir} at [cyan]http://localhost:{port}[/cyan]"
+        )
+        subprocess.run(
+            [sys.executable, "-m", "http.server", str(port)],
+            cwd=str(serve_dir),
+            check=False,
+        )
+    except subprocess.CalledProcessError:
+        sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
+# explain — inline terminal help for any assertion, metric, or check
+# ---------------------------------------------------------------------------
+
+
+@click.command(
+    help=(
+        "Show documentation for an assertion, metric, or conformance check.\n\n"
+        "NAME can be an assertion yaml_key (e.g. tool_called), a metric name "
+        "(e.g. tool_efficiency), or a conformance check ID (e.g. INIT-001).\n\n"
+        "Examples:\n\n"
+        "  mcptest explain tool_called\n\n"
+        "  mcptest explain tool_efficiency\n\n"
+        "  mcptest explain INIT-001"
+    )
+)
+@click.argument("name")
+def explain_command(name: str) -> None:
+    from mcptest.docs.terminal import explain
+
+    click.echo(explain(name))
