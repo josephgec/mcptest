@@ -48,9 +48,11 @@ docs = [
     "mkdocs>=1.5",
     "mkdocs-material>=9.0",
 ]
+mcp = []  # mcp>=1.0.0 is already a base dep; extra exists as a discovery hint
 
 [project.scripts]
 mcptest = "mcptest.cli:main"
+mcptest-mcp-server = "mcptest.mcp_server.__main__:main"
 
 [project.entry-points."pytest11"]
 mcptest = "mcptest.pytest_plugin"

@@ -669,16 +669,15 @@ def _render_results(
 # ---------------------------------------------------------------------------
 
 
-@click.command(help="Validate fixtures/ and tests/ YAML without running any agent.")
-@click.argument(
-    "path",
-    default=".",
-    type=click.Path(exists=False, resolve_path=True),
-)
-def validate_command(path: str) -> None:
-    console = Console()
+def collect_validate_errors(path: str | Path) -> tuple[int, list[dict[str, str]]]:
+    """Validate fixture and test YAML under *path* without running any agent.
+
+    Returns ``(checked, errors)`` where *errors* is a list of
+    ``{"file": str, "error": str}`` dicts.  Does not print or exit.
+    Shared between :func:`validate_command` and the MCP ``validate`` tool.
+    """
     root = Path(path)
-    errors: list[str] = []
+    errors: list[dict[str, str]] = []
     checked = 0
 
     fixture_dir = root / "fixtures"
@@ -689,10 +688,8 @@ def validate_command(path: str) -> None:
             checked += 1
             try:
                 load_fixture(f)
-                console.print(f"[green]✓[/green] fixture {f}")
             except FixtureLoadError as exc:
-                errors.append(f"{f}: {exc}")
-                console.print(f"[red]×[/red] fixture {f}: {exc}")
+                errors.append({"file": str(f), "error": str(exc)})
 
     test_files = discover_test_files(root / "tests")
     for t in test_files:
@@ -702,10 +699,41 @@ def validate_command(path: str) -> None:
             parse_assertions(
                 [a for case in suite.cases for a in case.assertions]
             )
-            console.print(f"[green]✓[/green] test   {t}")
         except (TestSuiteLoadError, ValueError) as exc:
-            errors.append(f"{t}: {exc}")
-            console.print(f"[red]×[/red] test   {t}: {exc}")
+            errors.append({"file": str(t), "error": str(exc)})
+
+    return checked, errors
+
+
+@click.command(help="Validate fixtures/ and tests/ YAML without running any agent.")
+@click.argument(
+    "path",
+    default=".",
+    type=click.Path(exists=False, resolve_path=True),
+)
+def validate_command(path: str) -> None:
+    console = Console()
+    checked, errors = collect_validate_errors(path)
+
+    root = Path(path)
+    fixture_dir = root / "fixtures"
+    if fixture_dir.exists():
+        for f in sorted(fixture_dir.glob("**/*.yaml")) + sorted(
+            fixture_dir.glob("**/*.yml")
+        ):
+            err_map = {e["file"]: e["error"] for e in errors}
+            if str(f) in err_map:
+                console.print(f"[red]×[/red] fixture {f}: {err_map[str(f)]}")
+            else:
+                console.print(f"[green]✓[/green] fixture {f}")
+
+    test_files = discover_test_files(root / "tests")
+    for t in test_files:
+        err_map = {e["file"]: e["error"] for e in errors}
+        if str(t) in err_map:
+            console.print(f"[red]×[/red] test   {t}: {err_map[str(t)]}")
+        else:
+            console.print(f"[green]✓[/green] test   {t}")
 
     if checked == 0:
         console.print("[yellow]nothing to validate[/yellow]")

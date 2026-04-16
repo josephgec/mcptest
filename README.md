@@ -73,6 +73,21 @@ mcptest capture "python my_server.py" --output fixtures/ --generate-tests
 mcptest run fixtures/my-server-tests.yaml
 ```
 
+## Use as an MCP server
+
+Drop one file into your project root and every tool becomes available natively in Claude Code, Cursor, and any other MCP client:
+
+```json
+// .mcp.json
+{
+  "mcpServers": {
+    "mcptest": { "command": "python", "args": ["-m", "mcptest.mcp_server"] }
+  }
+}
+```
+
+Ten tools exposed: `run_tests`, `install_pack`, `list_packs`, `snapshot`, `diff_baselines`, `explain`, `capture`, `conformance`, `validate`, `coverage`. See [docs/mcp-server.md](docs/mcp-server.md) for full setup instructions.
+
 ## Core features
 
 | Feature | Description |
