@@ -3,15 +3,13 @@ title: How I test my MCP agent without burning tokens
 published: false
 description: A walkthrough — mock a flaky GitHub API, assert on tool-call order, and catch a silent regression after a prompt change. Zero tokens spent, 1.6s per run.
 tags: mcp, testing, ai, python
-cover_image: https://raw.githubusercontent.com/josephgec/mcptest/main/docs/blog/cover.png
-canonical_url: https://github.com/josephgec/mcptest/blob/main/docs/blog/how-i-test-my-mcp-agent.md
 ---
 
 > **Publishing checklist**
-> 1. Generate a cover image (1000×420) — mock terminal screenshot showing green `mcptest` output works well. Upload to the repo at `docs/blog/cover.png` so the `cover_image` URL resolves.
-> 2. Flip `published: false` → `published: true` when ready to go live.
-> 3. On Dev.to → New Post → click the settings gear → paste this frontmatter into the editor (it parses it natively).
-> 4. Cross-post to Hashnode and Medium with the same `canonical_url` so Google doesn't split ranking.
+> 1. **Cover image**: take a screenshot of the green `mcptest run` output (the Rich table in Step 3) — that's the most visually distinctive frame. Crop to 1000×420. Upload to Dev.to via the editor's cover-image button (or, if you want it tracked in the repo, commit it to `docs/blog/cover.png` and add `cover_image: https://raw.githubusercontent.com/josephgec/mcptest/main/docs/blog/cover.png` to the frontmatter).
+> 2. **Canonical URL**: leave omitted. Dev.to will self-canonicalise, which is what you want — it ranks better in Google than a GitHub markdown file. If you cross-post to Hashnode or Medium *after* publishing here, add `canonical_url: <your-dev-to-url>` to those copies so they don't compete for the same ranking.
+> 3. **Publish**: flip `published: false` → `published: true`.
+> 4. **Paste target**: Dev.to → New Post → click the three-dot "⋯" menu → "Edit in Markdown mode" → paste everything below including the frontmatter. Dev.to parses it natively.
 
 ---
 
@@ -66,9 +64,8 @@ async def main():
         async with ClientSession(r, w) as session:
             await session.initialize()
             tools = await session.list_tools()
-            # your real agent would call an LLM here with SYSTEM_PROMPT + tools
-            # and execute whatever tool_calls it returns
-            plan = your_llm_plan(SYSTEM_PROMPT, user, tools)
+            # ↓ replace this placeholder with your real LLM call
+            plan = _call_your_llm(SYSTEM_PROMPT, user, tools)  # NOT a real function
             for call in plan:
                 await session.call_tool(call.name, arguments=call.args)
 
@@ -355,4 +352,4 @@ accumulating the same three bugs I accumulated. Start with one fixture and
 one test case. Catch the first prompt-change regression. Then you'll
 understand why MCP agents need this tool.*
 
-*If you found this useful, a ⭐ on [the repo](https://github.com/josephgec/mcptest) helps others find it.*
+If this was useful, drop a ⭐ on [github.com/josephgec/mcptest](https://github.com/josephgec/mcptest) — it genuinely helps other MCP builders find the project.
