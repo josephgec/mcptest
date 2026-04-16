@@ -3,11 +3,12 @@ title: How I test my MCP agent without burning tokens
 published: false
 description: A walkthrough — mock a flaky GitHub API, assert on tool-call order, and catch a silent regression after a prompt change. Zero tokens spent, 1.6s per run.
 tags: mcp, testing, ai, python
+cover_image: https://raw.githubusercontent.com/josephgec/mcptest/main/docs/blog/cover.png
 ---
 
 > **Publishing checklist**
-> 1. **Cover image**: take a screenshot of the green `mcptest run` output (the Rich table in Step 3) — that's the most visually distinctive frame. Crop to 1000×420. Upload to Dev.to via the editor's cover-image button (or, if you want it tracked in the repo, commit it to `docs/blog/cover.png` and add `cover_image: https://raw.githubusercontent.com/josephgec/mcptest/main/docs/blog/cover.png` to the frontmatter).
-> 2. **Canonical URL**: leave omitted. Dev.to will self-canonicalise, which is what you want — it ranks better in Google than a GitHub markdown file. If you cross-post to Hashnode or Medium *after* publishing here, add `canonical_url: <your-dev-to-url>` to those copies so they don't compete for the same ranking.
+> 1. **Cover image**: already committed at `docs/blog/cover.png` — a terminal screenshot of the green `mcptest run` output with a tagline. Replace it with a custom one if you like; otherwise, the frontmatter above picks it up from raw.githubusercontent.com as soon as this branch is on main.
+> 2. **Canonical URL**: omitted on purpose. Dev.to will self-canonicalise, which is what you want — it ranks better in Google than a GitHub markdown file. If you cross-post to Hashnode or Medium *after* publishing here, add `canonical_url: <your-dev-to-url>` to those copies so they don't compete for ranking.
 > 3. **Publish**: flip `published: false` → `published: true`.
 > 4. **Paste target**: Dev.to → New Post → click the three-dot "⋯" menu → "Edit in Markdown mode" → paste everything below including the frontmatter. Dev.to parses it natively.
 
