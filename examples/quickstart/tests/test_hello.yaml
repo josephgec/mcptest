@@ -1,0 +1,23 @@
+name: hello suite
+description: The mcptest 60-second quickstart.
+fixtures:
+  - ../fixtures/hello.yaml
+agent:
+  command: python ../agent.py
+cases:
+  - name: agent greets the world
+    input: "greet world"
+    assertions:
+      - tool_called: greet
+      - param_matches:
+          tool: greet
+          param: name
+          value: world
+      - max_tool_calls: 2
+      - no_errors: true
+
+  - name: agent says goodbye
+    input: "farewell"
+    assertions:
+      - tool_called: farewell
+      - no_errors: true

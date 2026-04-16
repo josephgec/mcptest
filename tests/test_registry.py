@@ -14,11 +14,11 @@ from mcptest.registry import TestPack as _TestPack
 from mcptest.testspec.loader import load_test_suite
 
 
-EXPECTED_PACKS = {"filesystem", "database", "http", "git", "slack"}
+EXPECTED_PACKS = {"filesystem", "database", "http", "git", "slack", "github"}
 
 
 class TestRegistry:
-    def test_lists_all_five_packs(self) -> None:
+    def test_lists_all_six_packs(self) -> None:
         assert set(list_packs()) == EXPECTED_PACKS
 
     def test_get_pack_known(self) -> None:

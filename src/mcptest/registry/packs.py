@@ -114,16 +114,31 @@ _FILESYSTEM_TESTS = """\
 name: filesystem pack
 description: Smoke tests for a filesystem MCP server.
 fixtures:
-  - fixtures/filesystem.yaml
+  - ../fixtures/filesystem.yaml
+# Swap this for your real agent. The built-in scripted agent just turns
+# stdin `tool_name key=value` lines into MCP tool calls.
 agent:
-  command: python ../../examples/scripted_agent.py
+  command: python -m mcptest.agents.scripted
   timeout_s: 10
 cases:
   - name: lists /tmp
-    input: list /tmp
+    input: fs_list path=/tmp
     assertions:
       - tool_called: fs_list
+      - param_matches: { tool: fs_list, param: path, value: /tmp }
       - no_errors: true
+
+  - name: reads hello.txt
+    input: fs_read path=/tmp/hello.txt
+    assertions:
+      - tool_called: fs_read
+      - no_errors: true
+
+  - name: blocks path traversal
+    input: fs_read path=../etc/passwd
+    assertions:
+      - tool_called: fs_read
+      - error_handled: "Path traversal"
 """
 
 
@@ -198,15 +213,30 @@ _DATABASE_TESTS = """\
 name: database pack
 description: Smoke tests for a SQL database MCP server.
 fixtures:
-  - fixtures/database.yaml
+  - ../fixtures/database.yaml
+# Swap this for your real agent. The built-in scripted agent just turns
+# stdin `tool_name key=value` lines into MCP tool calls.
 agent:
-  command: python ../../examples/scripted_agent.py
+  command: python -m mcptest.agents.scripted
   timeout_s: 10
 cases:
   - name: lists tables
-    input: list
+    input: db_list_tables
     assertions:
+      - tool_called: db_list_tables
       - no_errors: true
+
+  - name: reads users
+    input: db_query sql="SELECT id, name FROM users"
+    assertions:
+      - tool_called: db_query
+      - no_errors: true
+
+  - name: refuses DROP
+    input: db_execute sql="DROP TABLE users"
+    assertions:
+      - tool_called: db_execute
+      - error_handled: "DDL statements are not permitted"
 """
 
 
@@ -277,15 +307,31 @@ _HTTP_TESTS = """\
 name: http pack
 description: Smoke tests for an HTTP client MCP server.
 fixtures:
-  - fixtures/http.yaml
+  - ../fixtures/http.yaml
+# Swap this for your real agent. The built-in scripted agent just turns
+# stdin `tool_name key=value` lines into MCP tool calls.
 agent:
-  command: python ../../examples/scripted_agent.py
+  command: python -m mcptest.agents.scripted
   timeout_s: 10
 cases:
-  - name: placeholder
-    input: ""
+  - name: fetches users
+    input: http_get url=https://api.example.com/users
     assertions:
-      - max_tool_calls: 5
+      - tool_called: http_get
+      - param_matches: { tool: http_get, param: url, value: "https://api.example.com/users" }
+      - no_errors: true
+
+  - name: handles rate-limit
+    input: http_get url=https://api.example.com/rate_limited
+    assertions:
+      - tool_called: http_get
+      - error_handled: "rate limit exceeded"
+
+  - name: posts a payload
+    input: http_post url=https://api.example.com/items body={"x":1}
+    assertions:
+      - tool_called: http_post
+      - no_errors: true
 """
 
 
@@ -369,15 +415,31 @@ _GIT_TESTS = """\
 name: git pack
 description: Smoke tests for a git MCP server.
 fixtures:
-  - fixtures/git.yaml
+  - ../fixtures/git.yaml
+# Swap this for your real agent. The built-in scripted agent just turns
+# stdin `tool_name key=value` lines into MCP tool calls.
 agent:
-  command: python ../../examples/scripted_agent.py
+  command: python -m mcptest.agents.scripted
   timeout_s: 10
 cases:
-  - name: placeholder
-    input: ""
+  - name: reads history
+    input: git_log limit=5
     assertions:
-      - max_tool_calls: 5
+      - tool_called: git_log
+      - no_errors: true
+
+  - name: commits work
+    input: git_commit message="add feature"
+    assertions:
+      - tool_called: git_commit
+      - param_matches: { tool: git_commit, param: message, value: "add feature" }
+      - no_errors: true
+
+  - name: refuses empty commit message
+    input: git_commit message=""
+    assertions:
+      - tool_called: git_commit
+      - error_handled: "commit message cannot be empty"
 """
 
 
@@ -453,15 +515,202 @@ _SLACK_TESTS = """\
 name: slack pack
 description: Smoke tests for a Slack MCP server.
 fixtures:
-  - fixtures/slack.yaml
+  - ../fixtures/slack.yaml
+# Swap this for your real agent. The built-in scripted agent just turns
+# stdin `tool_name key=value` lines into MCP tool calls.
 agent:
-  command: python ../../examples/scripted_agent.py
+  command: python -m mcptest.agents.scripted
   timeout_s: 10
 cases:
-  - name: placeholder
-    input: ""
+  - name: sends a message
+    input: slack_send_message channel=#engineering text="ship it"
     assertions:
-      - max_tool_calls: 5
+      - tool_called: slack_send_message
+      - param_matches: { tool: slack_send_message, param: channel, value: "#engineering" }
+      - no_errors: true
+
+  - name: lists channels
+    input: slack_list_channels
+    assertions:
+      - tool_called: slack_list_channels
+      - no_errors: true
+
+  - name: refuses missing channel
+    input: slack_send_message channel=#ghost-channel text="hi"
+    assertions:
+      - tool_called: slack_send_message
+      - error_handled: "channel_not_found"
+"""
+
+
+# ---------------------------------------------------------------------------
+# github
+# ---------------------------------------------------------------------------
+
+_GITHUB_FIXTURE = """\
+server:
+  name: mock-github
+  version: "1.0"
+  description: Mock GitHub API MCP server (issues, PRs, repos).
+
+tools:
+  - name: gh_list_issues
+    description: List issues on a repository.
+    input_schema:
+      type: object
+      properties:
+        repo: { type: string }
+        state: { type: string }
+      required: [repo]
+    responses:
+      - match: { repo: "ghost/missing" }
+        error: not_found
+      - match: { repo: "acme/api" }
+        return:
+          issues:
+            - { number: 1, title: "Login flow 500s", state: open, labels: [bug] }
+            - { number: 2, title: "Add dark mode", state: open, labels: [feature] }
+            - { number: 3, title: "Fix typo in README", state: closed, labels: [docs] }
+      - default: true
+        return:
+          issues: []
+
+  - name: gh_create_issue
+    description: Open a new issue on a repository.
+    input_schema:
+      type: object
+      properties:
+        repo: { type: string }
+        title: { type: string }
+        body: { type: string }
+        labels:
+          type: array
+          items: { type: string }
+      required: [repo, title]
+    responses:
+      - match: { repo: "readonly/archive" }
+        error: archived
+      - match: { repo: "ghost/missing" }
+        error: not_found
+      - default: true
+        return:
+          number: 42
+          url: "https://github.com/acme/api/issues/42"
+          state: open
+
+  - name: gh_list_pulls
+    description: List pull requests on a repository.
+    input_schema:
+      type: object
+      properties:
+        repo: { type: string }
+        state: { type: string }
+      required: [repo]
+    responses:
+      - match: { repo: "acme/api" }
+        return:
+          pulls:
+            - { number: 101, title: "Refactor auth", state: open, draft: false }
+            - { number: 102, title: "WIP: new routing", state: open, draft: true }
+      - default: true
+        return:
+          pulls: []
+
+  - name: gh_merge_pr
+    description: Merge a pull request.
+    input_schema:
+      type: object
+      properties:
+        repo: { type: string }
+        number: { type: integer }
+      required: [repo, number]
+    responses:
+      - match: { number: 102 }
+        error: merge_blocked  # draft
+      - match: { number: 999 }
+        error: merge_conflict
+      - default: true
+        return:
+          merged: true
+          sha: "abc123def456"
+
+  - name: gh_get_repo
+    description: Read a repository's metadata.
+    input_schema:
+      type: object
+      properties:
+        repo: { type: string }
+      required: [repo]
+    responses:
+      - match: { repo: "ghost/missing" }
+        error: not_found
+      - default: true
+        return:
+          name: "api"
+          full_name: "acme/api"
+          private: false
+          default_branch: "main"
+          stargazers_count: 1337
+
+errors:
+  - name: not_found
+    error_code: -32050
+    message: "repository or issue not found"
+  - name: archived
+    error_code: -32051
+    message: "repository is archived and read-only"
+  - name: merge_conflict
+    error_code: -32052
+    message: "pull request has merge conflicts"
+  - name: merge_blocked
+    error_code: -32053
+    message: "pull request is a draft and cannot be merged"
+  - name: rate_limited
+    error_code: -32054
+    message: "GitHub API rate limit exceeded"
+"""
+
+_GITHUB_TESTS = """\
+name: github pack
+description: Smoke tests for a GitHub API MCP server.
+fixtures:
+  - ../fixtures/github.yaml
+# Swap this for your real agent. The built-in scripted agent just turns
+# stdin `tool_name key=value` lines into MCP tool calls.
+agent:
+  command: python -m mcptest.agents.scripted
+  timeout_s: 10
+cases:
+  - name: lists open issues
+    input: gh_list_issues repo=acme/api state=open
+    assertions:
+      - tool_called: gh_list_issues
+      - param_matches: { tool: gh_list_issues, param: repo, value: "acme/api" }
+      - no_errors: true
+
+  - name: opens a bug report
+    input: gh_create_issue repo=acme/api title="login 500" body="stacktrace..."
+    assertions:
+      - tool_called: gh_create_issue
+      - no_errors: true
+
+  - name: refuses to file on missing repo
+    input: gh_create_issue repo=ghost/missing title="hi"
+    assertions:
+      - tool_called: gh_create_issue
+      - error_handled: "not found"
+
+  - name: merges a clean PR
+    input: gh_merge_pr repo=acme/api number=101
+    assertions:
+      - tool_called: gh_merge_pr
+      - no_errors: true
+
+  - name: refuses to merge a draft
+    input: gh_merge_pr repo=acme/api number=102
+    assertions:
+      - tool_called: gh_merge_pr
+      - error_handled: "draft"
 """
 
 
@@ -511,6 +760,12 @@ PACKS: dict[str, TestPack] = {
         "Send messages, list channels, look up users on a mock Slack workspace, with permission errors.",
         _SLACK_FIXTURE,
         _SLACK_TESTS,
+    ),
+    "github": _pack(
+        "github",
+        "List/open issues, list/merge PRs, read repo metadata on a mock GitHub API, with not-found, archived, and merge-conflict errors.",
+        _GITHUB_FIXTURE,
+        _GITHUB_TESTS,
     ),
 }
 

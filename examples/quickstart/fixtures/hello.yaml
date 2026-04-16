@@ -1,0 +1,25 @@
+server:
+  name: hello-mock
+  version: "1.0"
+  description: A tiny greet+farewell mock for the mcptest quickstart.
+
+tools:
+  - name: greet
+    description: Say hello to someone by name.
+    input_schema:
+      type: object
+      properties:
+        name: { type: string }
+      required: [name]
+    responses:
+      - match: { name: "world" }
+        return:
+          message: "Hello, world!"
+      - default: true
+        return:
+          message: "Hello, stranger."
+
+  - name: farewell
+    description: Say goodbye.
+    responses:
+      - return_text: "Goodbye."
