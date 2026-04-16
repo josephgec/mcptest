@@ -1,5 +1,5 @@
 [project]
-name = "mcptest"
+name = "mcp-agent-test"
 version = "0.1.0"
 description = "pytest for MCP agents — a testing framework for Model Context Protocol agents"
 readme = "README.md"
