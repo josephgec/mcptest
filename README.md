@@ -1,16 +1,24 @@
 # mcptest
 
-**pytest for MCP agents.** A testing framework for Model Context Protocol (MCP) agents
-that lets you mock MCP servers with YAML fixtures, run agents against them in isolation,
+**pytest for MCP agents.** A vendor-neutral testing framework for Model Context Protocol (MCP)
+agents that lets you mock MCP servers with YAML fixtures, run agents against them in isolation,
 and assert against the resulting tool-call trajectories.
 
 ```bash
-pip install mcptest
+pip install mcp-agent-test
 mcptest init
 mcptest run
 ```
 
+[![PyPI](https://img.shields.io/pypi/v/mcp-agent-test)](https://pypi.org/project/mcp-agent-test/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 ## Why
+
+With Promptfoo acquired by OpenAI (March 2026), Humanloop by Anthropic (August 2025), and
+Galileo by Cisco (mid-2026), the independent eval-tool landscape has been absorbed into
+platform companies. `mcptest` fills the vacuum: a **vendor-neutral, open-source** testing
+framework purpose-built for MCP agent workflows.
 
 Building an agent that talks to real MCP servers means:
 
@@ -23,81 +31,97 @@ Building an agent that talks to real MCP servers means:
 `mcptest` gives MCP agents what `pytest` gave Python code: fast, hermetic, asserted tests
 and a regression safety net.
 
+## 60-second quickstart
+
+### Option A: Clone and run
+
+```bash
+git clone https://github.com/josephgec/mcptest
+cd mcptest/examples/quickstart
+pip install mcp-agent-test
+mcptest run
+```
+
+You'll see:
+
+```
+                        mcptest results
+┏━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳──────────────────────┓
+┃ Suite       ┃ Case                   ┃ Status ┃ Details              ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇──────────────────────┩
+│ hello suite │ agent greets the world │  PASS  │ ✓ tool_called: greet │
+│ hello suite │ agent says goodbye     │  PASS  │ ✓ tool_called: fare… │
+└─────────────┴────────────────────────┴────────┴──────────────────────┘
+
+2 passed, 0 failed (2 total)
+```
+
+### Option B: Scaffold a new project
+
+```bash
+pip install mcp-agent-test
+mcptest init my-tests
+cd my-tests
+mcptest run
+```
+
+### Option C: Capture from a live server
+
+```bash
+pip install mcp-agent-test
+mcptest capture "python my_server.py" --output fixtures/ --generate-tests
+mcptest run fixtures/my-server-tests.yaml
+```
+
 ## Core features
 
-- **Mock MCP servers from YAML** — declare tools, responses, and error scenarios in a
-  fixture file. No code required for the common case.
-- **Full MCP protocol** — mocks speak real MCP over stdio (and SSE), so your agent
-  connects to them the same way it connects to production servers.
-- **Trajectory assertions** — assert which tools were called, in what order, with what
-  parameters, how many times, and how quickly.
-- **Error injection** — trigger named error scenarios to test your agent's recovery paths.
-- **Metric-gated assertions & scorecards** — use any quality metric as a YAML assertion
-  gate (`metric_above`, `metric_below`), compose assertions with boolean combinators
-  (`all_of`, `any_of`, `none_of`, `weighted_score`), and generate a weighted quality
-  report card with `mcptest scorecard` for model comparison and prompt tuning.
-- **Regression diffing** — snapshot an agent's trajectory and detect drift when prompts,
-  models, or MCP servers change.
-- **Watch mode** — `mcptest watch` monitors your test files and fixtures, automatically
-  re-running only the affected tests when anything changes. Smart dependency tracking means
-  only the tests that reference a changed fixture are re-run.
-- **pytest integration** — use YAML files or write Python tests with fixtures.
-- **CI/CD ready** — GitHub Action + PR comment bot for regression gating.
-- **Inline docs** — `mcptest explain <name>` shows Rich-formatted terminal docs for any
-  assertion, metric, or check. `mcptest docs build` generates a full MkDocs site with
-  auto-generated reference pages that stay in sync with code automatically.
+| Feature | Description |
+|---------|-------------|
+| **YAML mock servers** | Declare tools, responses, and error scenarios — no code required |
+| **Full MCP protocol** | Mocks speak real MCP over stdio and SSE/HTTP |
+| **17 trajectory assertions** | `tool_called`, `param_matches`, `tool_order`, `error_handled`, `output_contains`, `metric_above`, boolean combinators, and more |
+| **7 quality metrics** | `tool_efficiency`, `redundancy`, `schema_compliance`, `stability`, `tool_coverage`, `error_recovery_rate`, `trajectory_similarity` |
+| **Regression diffing** | Snapshot baselines and detect drift when prompts, models, or servers change |
+| **Non-determinism testing** | Retry with tolerance — run N times, pass if ≥ T% succeed, measure stability |
+| **Parallel execution** | `-j N` flag for parallel test runs via `ThreadPoolExecutor` |
+| **6 fixture packs** | Pre-built mocks for GitHub, Slack, filesystem, database, HTTP, and git |
+| **MCP conformance testing** | 19 protocol checks across 5 sections with RFC 2119 severity |
+| **Semantic evaluation** | Keyword, regex, and similarity grading — no LLM API calls needed |
+| **Agent benchmarking** | Side-by-side model comparison with leaderboard and metric breakdowns |
+| **Fixture coverage** | Analyse which tools and responses your tests exercise |
+| **Watch mode** | Auto-rerun affected tests on file save |
+| **pytest plugin** | `@pytest.mark.mcptest` decorator and YAML collection |
+| **CI/CD ready** | GitHub Action + PR comment bot + badge generator |
+| **Cloud dashboard** | FastAPI backend with web UI, trend charts, baselines, and webhooks |
+| **Plugin system** | Custom assertions, metrics, and exporters via decorators or entry points |
 
-## Capture — tests write themselves
+## Pre-built fixture packs
 
-The fastest way to get started is `mcptest capture`. Point it at any MCP server
-and it auto-discovers tools, samples responses, and writes both fixture YAML and
-test-spec YAML — no hand-writing required.
+Get started immediately with mocks for popular MCP server patterns:
 
 ```bash
-# 1. Install
-pip install mcptest
+# List available packs
+mcptest list-packs
 
-# 2. Capture a live server → auto-generate fixture + tests
-mcptest capture "python my_server.py" --output fixtures/ --generate-tests
+# Install one
+mcptest install-pack github ./my-project
+mcptest install-pack slack ./my-project
 
-# Generated files:
-#   fixtures/my-server.yaml   ← fixture with real responses
-#   fixtures/my-server-tests.yaml  ← ready-to-run test suite
-
-# 3. Run the generated tests
-mcptest run fixtures/my-server-tests.yaml
-
-# 4. Watch mode — auto-run on save
-mcptest watch --watch-extra src/
+# Run it (uses the built-in generic agent)
+cd my-project && mcptest run
 ```
 
-Options:
+| Pack | Tools | Test cases | Error scenarios |
+|------|-------|------------|-----------------|
+| **github** | `gh_list_issues`, `gh_create_issue`, `gh_list_pulls`, `gh_merge_pr`, `gh_get_repo` | 5 | not-found, archived, merge-conflict, draft-blocked |
+| **slack** | `slack_send_message`, `slack_list_channels`, `slack_get_user` | 3 | permission-denied, channel-not-found, user-not-found |
+| **filesystem** | `fs_read`, `fs_write`, `fs_list`, `fs_delete` | 3 | not-found, permission-denied, path-traversal |
+| **database** | `db_query`, `db_execute`, `db_list_tables` | 3 | forbidden-DDL, connection-lost |
+| **http** | `http_get`, `http_post` | 3 | rate-limited, timeout |
+| **git** | `git_commit`, `git_branch`, `git_log`, `git_diff` | 3 | empty-message, branch-exists, merge-conflict |
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--output` / `-o` | `.` | Directory where files are written |
-| `--generate-tests` | off | Also write a test-spec YAML |
-| `--samples-per-tool` | `3` | Argument variations tried per tool |
-| `--dry-run` | off | Preview without writing files |
-| `--agent` | `python agent.py` | Agent command embedded in test suites |
-
-## Quickstart (manual)
-
-```bash
-# 1. Install
-pip install mcptest
-
-# 2. Scaffold a project
-mcptest init
-
-# 3. Edit fixtures/example.yaml and tests/example.yaml
-
-# 4. Run
-mcptest run
-
-# 5. Watch mode — auto-run on save
-mcptest watch --watch-extra src/
-```
+Each pack includes a fixture YAML and a test suite with real assertions — not placeholders.
+Swap the agent command in the test YAML with your own agent and everything keeps working.
 
 ## Example fixture
 
@@ -152,17 +176,96 @@ cases:
       - max_tool_calls: 3
 ```
 
+## Regression diffing
+
+The core differentiated feature: snapshot a baseline, change your prompt or model, diff
+the trajectories.
+
+```bash
+# 1. Establish a baseline
+mcptest snapshot tests/
+
+# 2. Make changes to your agent/prompt/model
+
+# 3. Diff against the baseline
+mcptest diff --ci
+# → exits non-zero if any regression detected
+```
+
+### GitHub Actions integration
+
+```yaml
+# .github/workflows/mcptest.yml
+- uses: josephgec/mcptest@main
+  with:
+    fail_on_regression: "true"
+    post_pr_comment: "true"
+  env:
+    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+The action runs your tests, diffs against baselines, and posts a PR comment summarizing
+regressions — including metric deltas and tool-call diffs.
+
+## Non-deterministic agent testing
+
+AI agents are non-deterministic. `mcptest` handles this natively:
+
+```yaml
+cases:
+  - name: agent books a table
+    input: "Book a table for 2 at 7pm"
+    retry: 5           # run 5 times
+    tolerance: 0.8     # pass if ≥80% of runs succeed
+    assertions:
+      - tool_called: create_booking
+```
+
+```bash
+# Override from CLI
+mcptest run --retry 5 --tolerance 0.8
+```
+
+The `RetryResult` captures per-run traces, pass rate, and **stability** (pairwise
+trajectory agreement) — so you can distinguish "flaky tool selection" from "consistently
+wrong."
+
+## Parallel execution
+
+```bash
+# Run tests across 4 workers
+mcptest run -j 4
+
+# Disable for a specific suite
+# (set parallel: false in the test YAML)
+```
+
+Each test case spawns an independent subprocess with a UUID-scoped trace file —
+zero shared mutable state.
+
+## Fixture coverage
+
+Analyse which tools and responses your tests actually exercise:
+
+```bash
+# Show coverage report
+mcptest coverage tests/
+
+# CI gate: fail if coverage < 80%
+mcptest coverage tests/ --threshold 0.8
+```
+
+Coverage scores are weighted: 40% tool coverage + 40% response path coverage + 20%
+error scenario coverage.
+
 ## Metric-gated assertions
 
 Use any of the 7 built-in quality metrics directly as YAML assertion gates:
 
 ```yaml
 assertions:
-  # Agent must be efficient (≥80% unique tool usage)
   - metric_above: {metric: tool_efficiency, threshold: 0.8}
-  # Agent must not be repetitive (non-redundancy score ≥0.9)
   - metric_above: {metric: redundancy, threshold: 0.9}
-  # Gate on a weighted composite quality score
   - weighted_score:
       threshold: 0.75
       weights:
@@ -188,34 +291,10 @@ assertions:
 
 ## Agent scorecard
 
-Generate a weighted quality report card from any saved trace:
-
 ```bash
-# Render a human-readable table (exit 1 if composite score < 0.75)
 mcptest scorecard trace.json
-
-# Override the threshold
 mcptest scorecard trace.json --fail-under 0.8
-
-# Custom weights from a YAML config
-mcptest scorecard trace.json --config scorecard.yaml
-
-# Machine-readable JSON output (for CI pipelines)
-mcptest scorecard trace.json --json
-```
-
-Example `scorecard.yaml`:
-
-```yaml
-composite_threshold: 0.75
-default_threshold: 0.7
-thresholds:
-  tool_efficiency: 0.8
-  error_recovery_rate: 0.9
-weights:
-  tool_efficiency: 2.0
-  redundancy: 1.0
-  error_recovery_rate: 3.0
+mcptest scorecard trace.json --config scorecard.yaml --json
 ```
 
 ## Conformance testing
@@ -223,248 +302,62 @@ weights:
 Verify that any MCP server implementation correctly implements the protocol.
 19 checks across 5 sections, each tagged with RFC 2119 severity (MUST / SHOULD / MAY).
 
-### Quick start
-
 ```bash
 # Test a server subprocess over stdio
 mcptest conformance "python my_server.py"
 
-# Test in-process using a fixture YAML (fast, no subprocess)
+# Test in-process using a fixture YAML
 mcptest conformance --fixture fixtures/my_server.yaml
 
-# Filter to a specific section
-mcptest conformance --fixture fixtures/my_server.yaml --section initialization
-
-# Only run MUST checks (CI gate — fail only on hard violations)
+# Only run MUST checks (CI gate)
 mcptest conformance --fixture fixtures/my_server.yaml --severity must
 
-# Also fail on SHOULD violations
-mcptest conformance --fixture fixtures/my_server.yaml --fail-on-should
-
-# Machine-readable output for CI pipelines
+# Machine-readable JSON
 mcptest conformance --fixture fixtures/my_server.yaml --json
 ```
 
-### Check catalogue
+| ID | Section | Severity | Description |
+|----|---------|----------|-------------|
+| INIT-001 | initialization | MUST | Server provides non-empty name |
+| INIT-002 | initialization | MUST | Server info includes version string |
+| INIT-003 | initialization | MUST | Server reports capabilities object |
+| INIT-004 | initialization | SHOULD | Capabilities includes `tools` when server has tools |
+| TOOL-001 | tool_listing | MUST | `list_tools()` returns a list |
+| TOOL-002 | tool_listing | MUST | Each tool has `name` and `inputSchema` fields |
+| TOOL-003 | tool_listing | MUST | All tool names are unique |
+| TOOL-004 | tool_listing | SHOULD | Each `inputSchema` has `type: "object"` at root |
+| CALL-001 | tool_calling | MUST | Calling a valid tool with matching arguments returns result |
+| CALL-002 | tool_calling | MUST | Result contains `content` list |
+| CALL-003 | tool_calling | MUST | Successful result has `isError` absent or False |
+| CALL-004 | tool_calling | MUST | Calling unknown tool name returns error |
+| CALL-005 | tool_calling | SHOULD | Error response sets `isError` to True |
+| ERR-001 | error_handling | MUST | Error result contains text content with message |
+| ERR-002 | error_handling | SHOULD | Server handles empty arguments dict without crashing |
+| ERR-003 | error_handling | SHOULD | Server handles None arguments without crashing |
+| RES-001 | resources | MUST | `list_resources()` returns a list |
+| RES-002 | resources | MUST | Each resource has `uri` and `name` fields |
+| RES-003 | resources | MUST | Resource URIs are unique |
 
-| ID       | Section        | Severity | Description                                          |
-|----------|----------------|----------|------------------------------------------------------|
-| INIT-001 | initialization | MUST     | Server provides non-empty name                       |
-| INIT-002 | initialization | MUST     | Server info includes version string                  |
-| INIT-003 | initialization | MUST     | Server reports capabilities object                   |
-| INIT-004 | initialization | SHOULD   | Capabilities includes `tools` when server has tools  |
-| TOOL-001 | tool_listing   | MUST     | `list_tools()` returns a list                        |
-| TOOL-002 | tool_listing   | MUST     | Each tool has `name` and `inputSchema` fields        |
-| TOOL-003 | tool_listing   | MUST     | All tool names are unique                            |
-| TOOL-004 | tool_listing   | SHOULD   | Each `inputSchema` has `type: "object"` at root      |
-| CALL-001 | tool_calling   | MUST     | Calling a valid tool with matching arguments returns result |
-| CALL-002 | tool_calling   | MUST     | Result contains `content` list                       |
-| CALL-003 | tool_calling   | MUST     | Successful result has `isError` absent or False      |
-| CALL-004 | tool_calling   | MUST     | Calling unknown tool name returns error              |
-| CALL-005 | tool_calling   | SHOULD   | Error response sets `isError` to True                |
-| ERR-001  | error_handling | MUST     | Error result contains text content with message      |
-| ERR-002  | error_handling | SHOULD   | Server handles empty arguments dict without crashing |
-| ERR-003  | error_handling | SHOULD   | Server handles None arguments without crashing       |
-| RES-001  | resources      | MUST     | `list_resources()` returns a list                    |
-| RES-002  | resources      | MUST     | Each resource has `uri` and `name` fields            |
-| RES-003  | resources      | MUST     | Resource URIs are unique                             |
+## Capture — tests write themselves
 
-Resource checks (RES-*) are automatically skipped when the server has no `resources` capability.
-
-### CI integration
-
-```yaml
-# .github/workflows/conformance.yml
-- name: MCP conformance
-  run: mcptest conformance --fixture fixtures/server.yaml --severity must --json > conformance.json
-```
-
-Exit code is 1 when any MUST check fails (or any SHOULD check fails with `--fail-on-should`).
-
-### Programmatic usage
-
-```python
-import anyio
-from mcptest.conformance import ConformanceRunner, InProcessServer, Severity
-from mcptest.fixtures.loader import load_fixture
-from mcptest.mock_server.server import MockMCPServer
-
-fixture = load_fixture("fixtures/my_server.yaml")
-mock = MockMCPServer(fixture)
-server = InProcessServer(mock=mock, fixture=fixture)
-
-runner = ConformanceRunner(server=server, severities=[Severity.MUST])
-results = anyio.run(runner.run)
-must_failures = [r for r in results if not r.passed and not r.skipped]
-```
-
-## Documentation
-
-Full reference documentation is auto-generated from live registries so it never
-goes stale.
+Point `mcptest capture` at any MCP server and it auto-discovers tools, samples responses,
+and writes both fixture YAML and test-spec YAML.
 
 ```bash
-# Look up any assertion, metric, or check inline
-mcptest explain tool_called
-mcptest explain tool_efficiency
-mcptest explain INIT-001
-
-# List all available assertions, metrics, and checks
-mcptest docs list
-
-# Generate a full MkDocs documentation site
-mcptest docs build --output ./site
-cd site && mkdocs serve
+mcptest capture "python my_server.py" --output fixtures/ --generate-tests
 ```
 
-The generated site includes:
-
-- **[Getting Started](docs/getting-started.md)** — capture-first 5-minute quickstart
-- **[Assertions Reference](docs/reference/assertions.md)** — all 19 assertions with YAML examples
-- **[Metrics Reference](docs/reference/metrics.md)** — 7 quality metrics with score interpretation
-- **[Conformance Checks Reference](docs/reference/checks.md)** — 19 protocol checks with severity
-- **[CLI Reference](docs/reference/cli.md)** — every command with full option tables
-
-## Configuration
-
-Place a `mcptest.yaml` file in your project root (or any parent directory) to
-set defaults for all CLI flags.  `mcptest` walks up from the current directory
-to find it — the same discovery strategy git uses for `.gitignore`.
-
-```yaml
-# mcptest.yaml
-test_paths: ["tests/"]
-fixture_paths: ["fixtures/"]
-baseline_dir: .mcptest/baselines
-
-retry: 3          # default retry count for every case
-tolerance: 0.8    # default pass-rate tolerance (0.0–1.0)
-parallel: 4       # default worker count (-j flag)
-fail_fast: false  # stop at first failure
-fail_under: 0.0   # coverage gate (mcptest coverage --threshold)
-
-# Per-metric thresholds used by mcptest scorecard
-thresholds:
-  tool_efficiency: 0.7
-  redundancy: 0.3
-
-# Plugins to load at startup (dotted module name or file path)
-plugins:
-  - my_company.mcptest_extensions
-  - ./custom_assertions.py
-
-# Cloud settings
-cloud:
-  url: https://mcptest.example.com
-  api_key_env: MCPTEST_API_KEY
-```
-
-CLI flags always override config-file values.  To inspect the resolved
-configuration and loaded plugins:
-
-```bash
-mcptest config
-```
-
-## Benchmarking
-
-`mcptest bench` runs the same test suite against multiple agent profiles and
-produces a side-by-side quality comparison.  Use it to quantify which model or
-prompt strategy performs best before migrating, or to add a regression gate to
-CI.
-
-### Define agent profiles
-
-Create an `agents.yaml` file listing the agents to compare:
-
-```yaml
-# agents.yaml
-agents:
-  - name: claude-sonnet
-    command: python agents/claude_agent.py
-    env:
-      MODEL: claude-3-5-sonnet-20241022
-    description: Anthropic Claude Sonnet 3.5
-
-  - name: gpt-4o
-    command: python agents/openai_agent.py
-    env:
-      MODEL: gpt-4o
-    description: OpenAI GPT-4o
-```
-
-Or embed profiles directly in `mcptest.yaml` so no extra file is needed:
-
-```yaml
-# mcptest.yaml
-agents:
-  - name: claude-sonnet
-    command: python agents/claude_agent.py
-    env: { MODEL: claude-3-5-sonnet-20241022 }
-  - name: gpt-4o
-    command: python agents/openai_agent.py
-    env: { MODEL: gpt-4o }
-```
-
-### Run the benchmark
-
-```bash
-# Explicit profiles file
-mcptest bench tests/ --agents agents.yaml
-
-# Profiles from mcptest.yaml
-mcptest bench tests/
-
-# Machine-readable JSON (pipe to jq, store in CI artifacts, etc.)
-mcptest bench tests/ --agents agents.yaml --json | jq .best_agent
-```
-
-The output includes three Rich tables:
-
-* **Leaderboard** — agents ranked by composite score with pass rate, duration,
-  and a `BEST` badge for the winner.
-* **Metric Comparison** — pivot table of per-agent average scores for each
-  quality metric, colour-coded green/yellow/red.
-* **Per-Test Breakdown** — pass/fail grid across agents and test cases,
-  highlighting where agents diverge.
-
-### CI integration
-
-```bash
-# Exit 1 if the best agent's composite score is below 0.75
-mcptest bench tests/ --agents agents.yaml --ci --fail-under 0.75
-```
-
-Add to your pipeline:
-
-```yaml
-# .github/workflows/bench.yml (example)
-- name: Benchmark agents
-  run: mcptest bench tests/ --agents agents.yaml --ci --fail-under 0.75
-```
-
-### Options
-
-| Flag | Description |
-|------|-------------|
-| `--agents <file>` | Load profiles from this YAML file |
-| `--json` | Emit JSON instead of Rich tables |
-| `--ci` | Exit non-zero when best score < `--fail-under` |
-| `--fail-under <float>` | CI composite-score threshold (default 0.0) |
-| `--retry <n>` | Override retry count for every case |
-| `--tolerance <float>` | Override pass-rate tolerance (0.0–1.0) |
-| `-j/--parallel <n>` | Parallel workers per agent |
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--output` / `-o` | `.` | Directory where files are written |
+| `--generate-tests` | off | Also write a test-spec YAML |
+| `--samples-per-tool` | `3` | Argument variations tried per tool |
+| `--dry-run` | off | Preview without writing files |
+| `--agent` | `python agent.py` | Agent command embedded in test suites |
 
 ## Semantic evaluation
 
-`mcptest eval` scores agent text output against named criteria — no LLM API
-calls required.  Grading is deterministic: keyword coverage, regex patterns,
-and text similarity (levenshtein / Jaccard / cosine).  It is ideal for CI
-pipelines where speed and cost predictability matter.
-
-### Define a rubric
-
-Create a rubric YAML that describes what a good answer looks like:
+`mcptest eval` scores agent text output against named criteria — no LLM API calls required.
 
 ```yaml
 # rubrics/booking.yaml
@@ -475,298 +368,179 @@ rubric:
       weight: 0.5
       method: keywords
       expected: [confirmed, booking_id, receipt]
-      threshold: 0.6        # ≥60 % of keywords must be present
+      threshold: 0.6
     - name: format
       weight: 0.3
       method: pattern
       expected: "Booking \\w+ confirmed"
-      threshold: 1.0        # regex must match
+      threshold: 1.0
     - name: completeness
       weight: 0.2
       method: similarity
       expected: "Your booking ABC123 is confirmed. You will receive a receipt."
-      threshold: 0.7        # text similarity must be ≥ 0.7
+      threshold: 0.7
 ```
 
-### Grading methods
-
-| Method | Description |
-|--------|-------------|
-| `keywords` | Fraction of expected keywords found in the text (sub-string) |
-| `pattern` | Binary regex match anywhere in the text (1.0 or 0.0) |
-| `similarity` | Best of levenshtein / Jaccard / cosine similarity against a reference |
-| `contains` | Binary sub-string check (1.0 or 0.0) |
-| `custom` | Reserved for plug-in graders (returns 0.0 by default) |
-
-### Run evaluations
-
 ```bash
-# Grade every test case against a rubric file
 mcptest eval tests/ --rubric rubrics/booking.yaml
-
-# Machine-readable JSON
-mcptest eval tests/ --rubric rubrics/booking.yaml --json
-
-# CI gate: exit 1 if mean composite score < 0.75 or any criterion fails
 mcptest eval tests/ --rubric rubrics/booking.yaml --ci --fail-under 0.75
 ```
 
-### Inline rubric in test spec
+Grading methods: `keywords`, `pattern`, `similarity`, `contains`, `custom`.
 
-Embed an `eval:` section directly in a test case to avoid a separate file:
+## Benchmarking
 
-```yaml
-# tests/booking.yaml
-name: Booking agent
-fixtures: [fixtures/booking.yaml]
-agent:
-  command: python agent.py
-cases:
-  - name: confirm booking
-    input: "Book a table for 2 at 7pm"
-    assertions:
-      - tool_called: create_booking
-    eval:
-      name: booking-quality
-      criteria:
-        - name: correctness
-          method: keywords
-          expected: [confirmed, booking_id]
-          weight: 1.0
-          threshold: 0.5
-```
-
-### Output
-
-The Rich table shows per-criterion average scores, pass rates, and verdicts:
-
-```
-Evaluation Report — rubric: booking-quality
-
- Criterion      Avg Score  Pass Rate  Verdict
- ──────────────────────────────────────────────
- correctness    0.833      100.0%     PASS
- format         1.000      100.0%     PASS
- completeness   0.721       80.0%     PARTIAL
-
-Overall: 4/5 passed (80.0%) — composite score 0.851
-```
-
-### Options
-
-| Flag | Description |
-|------|-------------|
-| `--rubric <file>` | Load rubric from this YAML file (overrides inline `eval:`) |
-| `--json` | Emit JSON instead of Rich tables |
-| `--ci` | Exit non-zero when any criterion fails or score < `--fail-under` |
-| `--fail-under <float>` | CI composite-score threshold (default 0.0) |
-| `--retry <n>` | Override retry count for every case |
-| `--tolerance <float>` | Override pass-rate tolerance (0.0–1.0) |
-| `-j/--parallel <n>` | Parallel workers |
-
-### Programmatic usage
-
-```python
-from pathlib import Path
-from mcptest.eval import Grader, load_rubric, aggregate_results
-
-rubric = load_rubric(Path("rubrics/booking.yaml"))
-grader = Grader(rubric)
-
-texts = [
-    "Your booking ABC123 is confirmed. Receipt sent.",
-    "Booking confirmed.",
-]
-results = [grader.grade(t) for t in texts]
-summary = aggregate_results(results)
-print(summary.pass_rate, summary.mean_composite)
-```
-
-## Plugins
-
-Plugins let you add custom assertions, metrics, and exporters without forking
-mcptest.  Any module that calls the registration decorators at import time is
-a valid plugin.
-
-**Load via config file** (dotted module name or file path):
+Run the same test suite against multiple agent profiles and produce a side-by-side comparison:
 
 ```yaml
-# mcptest.yaml
+# agents.yaml
+agents:
+  - name: claude-sonnet
+    command: python agents/claude_agent.py
+    env: { MODEL: claude-sonnet-4-20250514 }
+  - name: gpt-4o
+    command: python agents/openai_agent.py
+    env: { MODEL: gpt-4o }
+```
+
+```bash
+mcptest bench tests/ --agents agents.yaml
+mcptest bench tests/ --agents agents.yaml --ci --fail-under 0.75
+```
+
+Output: leaderboard, metric comparison pivot table, per-test pass/fail grid.
+
+## Configuration
+
+Place a `mcptest.yaml` in your project root:
+
+```yaml
+test_paths: ["tests/"]
+fixture_paths: ["fixtures/"]
+baseline_dir: .mcptest/baselines
+
+retry: 3
+tolerance: 0.8
+parallel: 4
+fail_fast: false
+fail_under: 0.0
+
+thresholds:
+  tool_efficiency: 0.7
+  redundancy: 0.3
+
 plugins:
-  - my_company.mcptest_extensions  # installed package
-  - ./custom_assertions.py         # local file
+  - my_company.mcptest_extensions
+  - ./custom_assertions.py
+
+cloud:
+  url: https://mcptest.example.com
+  api_key_env: MCPTEST_API_KEY
 ```
 
-**Load via `confmcptest.py`** (auto-discovered, like pytest's `conftest.py`):
-
-```python
-# tests/confmcptest.py
-from mcptest.assertions.base import register_assertion, TraceAssertion
-from mcptest.runner.trace import Trace
-from mcptest.assertions.base import AssertionResult
-
-@register_assertion
-class response_is_json(TraceAssertion):
-    yaml_key = "response_is_json"
-
-    def check(self, trace: Trace) -> AssertionResult:
-        ok = all(
-            "json" in (call.result or "").lower()
-            for call in trace.tool_calls
-        )
-        return AssertionResult(
-            passed=ok,
-            name=self.yaml_key,
-            message="all tool responses are JSON" if ok else "non-JSON response found",
-        )
-```
-
-**Load via entry points** (for distributable packages):
-
-```toml
-# pyproject.toml of your plugin package
-[project.entry-points."mcptest.assertions"]
-my_assertions = "my_package.assertions"
-
-[project.entry-points."mcptest.metrics"]
-my_metrics = "my_package.metrics"
-
-[project.entry-points."mcptest.exporters"]
-my_exporter = "my_package.exporters"
-```
-
-Once installed, your assertions are available by `yaml_key` in any test YAML:
-
-```yaml
-assertions:
-  - response_is_json: true
+```bash
+mcptest config  # inspect resolved configuration
 ```
 
 ## Cloud dashboard
 
-`mcptest` ships a lightweight web UI for the cloud backend that runs with zero build
-tooling — Tailwind CSS, htmx, and Chart.js are all loaded from CDN.
-
-### Launch
+A lightweight web UI for test analytics — Tailwind CSS + htmx + Chart.js, zero build step.
 
 ```bash
-# Install cloud extras
-pip install 'mcptest[cloud]'
-
-# Start the dashboard (opens browser automatically)
+pip install 'mcp-agent-test[cloud]'
 mcptest dashboard
-
-# Custom host / port / database
-mcptest dashboard --host 0.0.0.0 --port 8200 --db ./prod.db --no-browser
 ```
 
-The server starts at `http://127.0.0.1:8100/dashboard/` by default.
+| Page | Description |
+|------|-------------|
+| **Overview** | Stats cards, recent runs, per-suite pass/fail bars |
+| **Runs** | Filterable, paginated run list with live htmx updates |
+| **Run detail** | Metric charts, collapsible tool-call timeline, promote-as-baseline |
+| **Trends** | Line charts of any metric over time with baseline markers |
+| **Baselines** | Active baseline table, one-click demote, two-run comparison |
+| **Webhooks** | Register endpoints, view delivery history, send test pings |
 
-### Pages
-
-| Page | URL | Description |
-|------|-----|-------------|
-| Overview | `/dashboard/` | Stats cards (total runs, pass rate, avg duration, tool calls, baselines), recent-runs table, per-suite pass/fail bars |
-| Runs | `/dashboard/runs` | Filterable, paginated run list. Dropdowns for suite, branch, status, and environment update the table live via htmx without a full page reload. |
-| Run detail | `/dashboard/runs/{id}` | Full run info: metric scores (horizontal bar chart), collapsible tool-call timeline with arguments and results, input/output panels, promote-as-baseline button. |
-| Trends | `/dashboard/trends` | Chart.js line chart of any metric over time. Baseline runs are marked with stars. Controls for metric, suite, branch, and data limit update the chart instantly. |
-| Baselines | `/dashboard/baselines` | Active baseline table with one-click demote (htmx). Compare any two runs by ID and see a metric delta table with regression indicators. |
-| Webhooks | `/dashboard/webhooks` | Register and manage HTTP webhook endpoints. Create webhooks with event subscriptions, view delivery history, and send test pings. |
-
-### Configuration
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--host` | `127.0.0.1` | Bind address |
-| `--port` | `8100` | Listen port |
-| `--db` | `./mcptest_cloud.db` | SQLite database path (or set `MCPTEST_DATABASE_URL`) |
-| `--no-browser` | off | Skip auto-opening the browser |
-
-The dashboard is backed by the same FastAPI app as `mcptest cloud-push`; all API
-endpoints remain available at their existing paths alongside the dashboard routes.
-
-## Webhook system
-
-mcptest cloud can POST signed JSON notifications to external HTTP endpoints when
-key events occur — completing the CI loop from `cloud-push` through auto-regression
-check to team alert.
-
-### Events
+### Webhook events
 
 | Event | Fires when |
 |-------|-----------|
-| `run.created` | A new test run is pushed via `POST /runs` |
-| `regression.detected` | `POST /runs/{id}/check` finds metric regressions vs baseline |
-| `baseline.promoted` | A run is promoted as the suite baseline |
-| `baseline.demoted` | A baseline is demoted/removed |
+| `run.created` | A new test run is pushed |
+| `regression.detected` | Metric regression found vs baseline |
+| `baseline.promoted` | A run is promoted as baseline |
+| `baseline.demoted` | A baseline is removed |
 
-### API
+Deliveries are HMAC-SHA256 signed, retry up to 3x with exponential back-off,
+and logged in the dashboard.
 
-```bash
-# Register a webhook
-curl -X POST http://localhost:8100/webhooks \
-  -H "X-API-Key: $KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "url": "https://hooks.slack.com/services/...",
-    "secret": "my-signing-secret",
-    "events": ["regression.detected", "baseline.promoted"],
-    "suite_filter": "smoke"
-  }'
+## Plugins
 
-# List webhooks
-curl http://localhost:8100/webhooks -H "X-API-Key: $KEY"
-
-# Send a test ping
-curl -X POST http://localhost:8100/webhooks/{id}/test -H "X-API-Key: $KEY"
-
-# View delivery history
-curl http://localhost:8100/webhooks/{id}/deliveries -H "X-API-Key: $KEY"
+```yaml
+# mcptest.yaml
+plugins:
+  - my_company.mcptest_extensions
+  - ./custom_assertions.py
 ```
 
-### Payload format
-
-Every delivery POSTs the same envelope:
-
-```json
-{
-  "event": "regression.detected",
-  "timestamp": "2026-01-15T12:00:00+00:00",
-  "data": {
-    "head_id": 42,
-    "base_id": 37,
-    "suite": "smoke",
-    "branch": "feat/new-prompt",
-    "regression_count": 2,
-    "deltas": [
-      {"name": "tool_efficiency", "base_score": 0.9, "head_score": 0.6, "delta": -0.3}
-    ]
-  }
-}
-```
-
-### Signature verification
-
-When a `secret` is set, each request includes an `X-MCPTest-Signature: sha256=<hex>`
-header.  Verify it in your receiver:
+Or use `confmcptest.py` (auto-discovered like pytest's `conftest.py`):
 
 ```python
-import hashlib, hmac
+from mcptest.assertions.base import register_assertion, _AssertionBase, AssertionResult
+from mcptest.runner.trace import Trace
 
-def verify(secret: str, body: bytes, header: str) -> bool:
-    expected = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
-    provided = header.removeprefix("sha256=")
-    return hmac.compare_digest(expected, provided)
+@register_assertion
+class response_is_json(_AssertionBase):
+    yaml_key = "response_is_json"
+    def check(self, trace: Trace) -> AssertionResult: ...
 ```
 
-Delivery retries up to 3 times with exponential back-off (1 s, 4 s, 16 s) on
-connection errors or 5xx responses.  Every attempt is logged in the
-`webhook_deliveries` table and visible in the dashboard.
+Or distribute via entry points:
 
-## Status
+```toml
+[project.entry-points."mcptest.assertions"]
+my_assertions = "my_package.assertions"
+```
 
-Alpha. The core loop (mock server → runner → assertions → CLI) is functional; SSE
-transport and test packs are under active development.
+## CLI reference
+
+```
+mcptest run          Run test files
+mcptest init         Scaffold a new project
+mcptest capture      Auto-generate fixtures from a live server
+mcptest validate     Validate YAML without running
+mcptest snapshot     Save baselines
+mcptest diff         Diff against baselines (--ci for CI gate)
+mcptest watch        Auto-rerun on file changes
+mcptest coverage     Fixture coverage report
+mcptest conformance  MCP protocol conformance checks
+mcptest eval         Semantic evaluation with rubrics
+mcptest bench        Multi-agent benchmarking
+mcptest scorecard    Weighted quality report card
+mcptest metrics      Compute quality metrics from traces
+mcptest compare      Compare two trace files
+mcptest record       Record a single agent run
+mcptest export       Convert results to JUnit/TAP/HTML
+mcptest badge        Generate shields.io badge
+mcptest config       Show resolved configuration
+mcptest explain      Inline docs for any assertion/metric/check
+mcptest docs         Generate MkDocs documentation site
+mcptest generate     Generate test YAML from fixture schemas
+mcptest list-packs   List built-in fixture packs
+mcptest install-pack Install a fixture pack
+mcptest cloud-push   Push traces to the cloud backend
+mcptest dashboard    Launch the web UI
+mcptest github-comment  Post PR summary comment
+```
+
+## Stats
+
+- **1,801 tests** passing
+- **93% code coverage**
+- **29 CLI commands**
+- **17 trajectory assertions**
+- **7 quality metrics**
+- **19 conformance checks**
+- **6 pre-built fixture packs**
+- Python 3.10+, MIT licensed, zero vendor lock-in
 
 ## License
 
