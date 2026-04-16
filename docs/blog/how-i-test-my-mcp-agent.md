@@ -30,6 +30,43 @@ I have an agent that reads a bug report and decides whether to:
 - Comment on an existing issue (if a similar one is already filed)
 - Do nothing (if the report is spam or unclear)
 
+The agent itself is about thirty lines of Python that wraps an LLM call and
+the MCP client:
+
+```python
+# agent.py
+import asyncio, json, os, sys
+from mcp import ClientSession
+from mcp.client.stdio import StdioServerParameters, stdio_client
+
+SYSTEM_PROMPT = """You are an issue triage assistant for acme/api.
+Before filing a new issue, ALWAYS check list_issues for duplicates.
+If a duplicate exists, call add_comment instead."""
+
+async def main():
+    fx = json.loads(os.environ["MCPTEST_FIXTURES"])[0]
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "mcptest.mock_server", fx],
+        env=os.environ.copy(),
+    )
+    user = sys.stdin.read()
+    async with stdio_client(params) as (r, w):
+        async with ClientSession(r, w) as session:
+            await session.initialize()
+            tools = await session.list_tools()
+            # your real agent would call an LLM here with SYSTEM_PROMPT + tools
+            # and execute whatever tool_calls it returns
+            plan = your_llm_plan(SYSTEM_PROMPT, user, tools)
+            for call in plan:
+                await session.call_tool(call.name, arguments=call.args)
+
+asyncio.run(main())
+```
+
+That's it. The rest of the post is about testing what this agent *does* —
+which tools it picks, in what order — without ever calling a real LLM.
+
 It talks to a GitHub MCP server. I want to test four things:
 
 1. For a clear bug report, it calls `create_issue` exactly once.
@@ -259,15 +296,15 @@ server gets its trajectories diffed against main. If behavior changes, a
 comment lands on the PR with the exact tool-order delta. Reviewers see
 *agent behavior changed* as clearly as they see *code changed*.
 
-## Why this matters right now
+## Why MCP-specific matters
 
-Three independent eval tools got acquired in the last twelve months:
-Promptfoo by OpenAI, Humanloop by Anthropic, Galileo by Cisco. Every one of
-them left behind teams wondering whether to stay on a platform-owned tool or
-switch. `mcptest` is independent, MIT-licensed, and specifically shaped to
-MCP agents — the `tool_called` / `tool_order` / `error_handled` primitives
-exist because that's what an MCP trajectory actually looks like, not because
-someone ported a generic LLM-eval DSL.
+Eval tooling is consolidating fast — independent evaluation startups keep
+getting folded into the big model-provider platforms. That's useful if
+you're all-in on one vendor; it's a lock-in risk if you're not. `mcptest`
+is independent, MIT-licensed, and specifically shaped to MCP agents — the
+`tool_called` / `tool_order` / `error_handled` primitives exist because
+that's what an MCP trajectory actually looks like, not because someone
+ported a generic LLM-eval DSL over.
 
 And MCP agent testing is *particularly* underserved. DeepEval is great for
 prompt evaluation. Inspect AI is great for benchmarks. Neither gives you
